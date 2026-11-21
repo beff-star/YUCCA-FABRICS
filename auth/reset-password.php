@@ -3,7 +3,9 @@ require_once __DIR__ . '/../includes/functions.php';
 $token = (string) ($_GET['token'] ?? $_POST['token'] ?? '');
 $error = '';
 $done = false;
+$invalidLink = false; // only a bad or expired link hides the form; a weak password lets the user retry
 if (!preg_match('/^[a-f0-9]{64}$/', $token)) {
+    $invalidLink = true;
     $error = 'This reset link is invalid or expired.';
 } elseif ($_SERVER['REQUEST_METHOD'] === 'POST') {
     verify_csrf();
@@ -18,6 +20,7 @@ if (!preg_match('/^[a-f0-9]{64}$/', $token)) {
         $reset = $stmt->fetch();
         if (!$reset) {
             $pdo->rollBack();
+            $invalidLink = true;
             $error = 'This reset link is invalid or expired.';
         } else {
             $pdo->prepare('UPDATE users SET password_hash = ? WHERE id = ?')->execute([password_hash($password, PASSWORD_DEFAULT), $reset['user_id']]);
@@ -28,9 +31,24 @@ if (!preg_match('/^[a-f0-9]{64}$/', $token)) {
     }
 }
 $pageTitle = 'Choose a new password | Yucca Fabrics';
-require __DIR__ . '/../includes/header.php';
+$authEyebrow = 'Account help';
+$authTitle = 'Choose a new password';
+$authIntro = $done ? '' : 'Pick something you haven’t used before.';
+require __DIR__ . '/../includes/auth-start.php';
 ?>
-<section class="mx-auto max-w-md px-5 py-20"><h1 class="font-serif text-4xl">Choose a new password</h1>
-<?php if ($error): ?><p class="mt-5 rounded bg-red-50 p-3 text-sm text-red-800"><?= e($error) ?></p><?php endif; ?>
-<?php if ($done): ?><p class="mt-5 rounded bg-green-50 p-3 text-sm text-green-800">Your password has been updated. <a class="underline" href="<?= e(url('auth/login.php')) ?>">Sign in</a>.</p><?php elseif (!$error): ?><form method="post" class="mt-8 grid gap-4"><input type="hidden" name="csrf_token" value="<?= e(csrf_token()) ?>"><input type="hidden" name="token" value="<?= e($token) ?>"><label class="text-sm">New password<input class="form-control mt-1" type="password" name="password" minlength="10" required autocomplete="new-password"></label><button class="rounded-full bg-forest px-6 py-3 font-semibold text-white">Update password</button></form><?php endif; ?></section>
-<?php require __DIR__ . '/../includes/footer.php'; ?>
+<?php if ($done): ?>
+    <?= form_alert('Your password has been updated. You can now sign in with it.', 'success') ?>
+    <a class="mt-6 inline-block rounded-full bg-forest px-6 py-3.5 font-semibold text-white transition hover:bg-olive" href="<?= e(url('auth/login.php')) ?>">Sign in</a>
+<?php elseif ($invalidLink): ?>
+    <?= form_alert($error) ?>
+    <a class="mt-6 inline-block rounded-full bg-forest px-6 py-3.5 font-semibold text-white transition hover:bg-olive" href="<?= e(url('auth/forgot-password.php')) ?>">Request a new link</a>
+<?php else: ?>
+    <?php if ($error): ?><div class="mb-5"><?= form_alert($error) ?></div><?php endif; ?>
+    <form method="post" class="grid gap-5">
+        <input type="hidden" name="csrf_token" value="<?= e(csrf_token()) ?>">
+        <input type="hidden" name="token" value="<?= e($token) ?>">
+        <?= password_input_html('password', 'new-password', 'New password', 'new-password', 10, 'At least 10 characters, with an uppercase letter, a lowercase letter and a number.') ?>
+        <button class="rounded-full bg-forest px-6 py-3.5 font-semibold text-white transition hover:bg-olive">Update password</button>
+    </form>
+<?php endif; ?>
+<?php require __DIR__ . '/../includes/auth-end.php'; ?>

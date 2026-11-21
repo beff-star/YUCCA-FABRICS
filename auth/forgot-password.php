@@ -25,9 +25,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $message = 'If an active account matches that email, password reset instructions will be sent.';
 }
 $pageTitle = 'Reset password | Yucca Fabrics';
-require __DIR__ . '/../includes/header.php';
+$authEyebrow = 'Account help';
+$authTitle = 'Forgot your password?';
+$authIntro = 'Enter your email and, if it belongs to an active account, we’ll send a one-time reset link that works for one hour.';
+require __DIR__ . '/../includes/auth-start.php';
 ?>
-<section class="mx-auto max-w-md px-5 py-20"><h1 class="font-serif text-4xl">Forgot your password?</h1><p class="mt-3 text-sm text-gray-600">Enter your email and, if it belongs to an active account, we’ll send a one-time reset link.</p>
-<?php if ($message): ?><p class="mt-5 rounded bg-green-50 p-3 text-sm text-green-800"><?= e($message) ?></p><?php endif; ?>
-<form method="post" class="mt-8 grid gap-4"><input type="hidden" name="csrf_token" value="<?= e(csrf_token()) ?>"><label class="text-sm">Email<input class="form-control mt-1" type="email" name="email" required></label><button class="rounded-full bg-forest px-6 py-3 font-semibold text-white">Send reset link</button></form></section>
-<?php require __DIR__ . '/../includes/footer.php'; ?>
+<?php if ($message): ?><div class="mb-5"><?= form_alert($message, 'success') ?></div><?php endif; ?>
+<form method="post" class="grid gap-5">
+    <input type="hidden" name="csrf_token" value="<?= e(csrf_token()) ?>">
+    <label class="text-sm font-medium">Email<input class="form-control mt-1" type="email" name="email" required autocomplete="email"></label>
+    <button class="rounded-full bg-forest px-6 py-3.5 font-semibold text-white transition hover:bg-olive">Send reset link</button>
+</form>
+<p class="mt-8 rounded-2xl bg-cream p-4 text-center text-sm">Remembered it? <a class="font-semibold text-forest underline" href="<?= e(url('auth/login.php')) ?>">Back to sign in</a></p>
+<?php require __DIR__ . '/../includes/auth-end.php'; ?>

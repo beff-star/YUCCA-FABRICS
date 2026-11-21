@@ -1,7 +1,55 @@
 document.addEventListener('DOMContentLoaded',()=>{
+  const header=document.getElementById('site-header');
   const toggle=document.getElementById('menu-toggle');
   const mobile=document.getElementById('mobile-nav');
-  if(toggle&&mobile)toggle.addEventListener('click',()=>{const open=mobile.classList.toggle('hidden')===false;toggle.setAttribute('aria-expanded',String(open));});
+  const setMenu=open=>{if(!toggle||!mobile)return;mobile.classList.toggle('hidden',!open);toggle.setAttribute('aria-expanded',String(open));toggle.setAttribute('aria-label',open?'Close menu':'Open menu');toggle.querySelector('i')?.classList.replace(open?'fa-bars':'fa-xmark',open?'fa-xmark':'fa-bars');};
+  toggle?.addEventListener('click',()=>{setMenu(toggle.getAttribute('aria-expanded')!=='true');setSearch(false);});
+  window.matchMedia('(min-width: 1024px)').addEventListener('change',event=>{if(event.matches)setMenu(false);});
+  const searchToggle=document.querySelector('[data-search-toggle]');
+  const searchPanel=document.getElementById('site-search');
+  const setSearch=open=>{if(!searchToggle||!searchPanel)return;searchPanel.classList.toggle('hidden',!open);searchToggle.setAttribute('aria-expanded',String(open));if(open)searchPanel.querySelector('input')?.focus();};
+  searchToggle?.addEventListener('click',()=>{setSearch(searchToggle.getAttribute('aria-expanded')!=='true');setMenu(false);});
+  // Hover opens the Services menu on desktop; the button also toggles it for touch and keyboard users.
+  const dropdowns=[...document.querySelectorAll('[data-dropdown]')];
+  const closeDropdowns=except=>dropdowns.forEach(dropdown=>{if(dropdown===except)return;dropdown.classList.remove('is-open');dropdown.querySelector('button')?.setAttribute('aria-expanded','false');});
+  dropdowns.forEach(dropdown=>{const button=dropdown.querySelector('button');button?.addEventListener('click',()=>{const open=!dropdown.classList.contains('is-open');closeDropdowns(dropdown);dropdown.classList.toggle('is-open',open);button.setAttribute('aria-expanded',String(open));});});
+  document.addEventListener('click',event=>{if(!event.target.closest('[data-dropdown]'))closeDropdowns();});
+  document.addEventListener('keydown',event=>{
+    if(event.key!=='Escape')return;
+    if(toggle?.getAttribute('aria-expanded')==='true'){setMenu(false);toggle.focus();}
+    if(searchToggle?.getAttribute('aria-expanded')==='true'){setSearch(false);searchToggle.focus();}
+    const openDropdown=dropdowns.find(dropdown=>dropdown.classList.contains('is-open'));
+    if(openDropdown){closeDropdowns();openDropdown.querySelector('button')?.focus();}
+  });
+  const backToTop=document.getElementById('back-to-top');
+  const onScroll=()=>{const y=window.scrollY;header?.classList.toggle('is-scrolled',y>8);backToTop?.classList.toggle('is-visible',y>600);};
+  window.addEventListener('scroll',onScroll,{passive:true});onScroll();
+  backToTop?.addEventListener('click',event=>{event.preventDefault();window.scrollTo({top:0,behavior:window.matchMedia('(prefers-reduced-motion: reduce)').matches?'auto':'smooth'});document.getElementById('main')?.focus({preventScroll:true});});
+  // Bag quantities save as soon as they change; the "Update bag" button remains for no-JS visitors.
+  document.querySelectorAll('form[data-auto-submit]').forEach(form=>form.querySelectorAll('input[type="number"]').forEach(input=>input.addEventListener('change',()=>{if(input.checkValidity())form.requestSubmit(form.querySelector('[data-update-button]'));})));
+  document.querySelectorAll('[data-toggle-password]').forEach(button=>button.addEventListener('click',()=>{
+    const input=button.parentElement.querySelector('input');
+    const show=input.type==='password';
+    input.type=show?'text':'password';
+    button.setAttribute('aria-pressed',String(show));
+    button.setAttribute('aria-label',show?'Hide password':'Show password');
+    button.querySelector('i')?.classList.replace(show?'fa-eye':'fa-eye-slash',show?'fa-eye-slash':'fa-eye');
+  }));
+  // Service CTAs pre-select the form option. If the form is on another page the link just navigates there.
+  document.querySelectorAll('[data-fill-select]').forEach(link=>link.addEventListener('click',event=>{
+    const select=document.querySelector(link.dataset.fillSelect);
+    const target=link.hash?document.querySelector(link.hash):null;
+    if(!select||!target)return;
+    event.preventDefault();
+    if(link.dataset.fillValue)select.value=link.dataset.fillValue;
+    target.scrollIntoView({behavior:window.matchMedia('(prefers-reduced-motion: reduce)').matches?'auto':'smooth'});
+    select.focus({preventScroll:true});
+  }));
+  if('IntersectionObserver' in window){
+    document.documentElement.classList.add('reveal-ready');
+    const observer=new IntersectionObserver(entries=>entries.forEach(entry=>{if(entry.isIntersecting){entry.target.classList.add('is-visible');observer.unobserve(entry.target);}}),{rootMargin:'0px 0px -8% 0px'});
+    document.querySelectorAll('main > section').forEach(section=>observer.observe(section));
+  }
   const search=document.getElementById('search');
   const suggestions=document.getElementById('search-suggestions');
   if(search&&suggestions){
@@ -55,4 +103,4 @@ document.addEventListener('DOMContentLoaded',()=>{
   }));
   document.querySelectorAll('[data-confirm]').forEach(form=>form.addEventListener('submit',event=>{if(!confirm(form.dataset.confirm)){event.preventDefault();}}));
 });
-function notify(message,isError=false){const toast=document.createElement('div');toast.className='toast';toast.style.background=isError?'#8f4038':'#34483a';toast.textContent=message;document.body.appendChild(toast);setTimeout(()=>toast.remove(),3500);}
+function notify(message,isError=false){const toast=document.createElement('div');toast.className='toast';toast.style.background=isError?'#8f4038':'#3F5320';toast.setAttribute('role',isError?'alert':'status');toast.textContent=message;document.body.appendChild(toast);setTimeout(()=>toast.remove(),3500);}

@@ -94,9 +94,18 @@ function require_login(): void
 
 function require_admin(): void
 {
-    if (!current_user() || (current_user()['role'] ?? '') !== 'admin') {
+    // Signed-out visitors are sent to sign in; signed-in customers get a branded "no access" page.
+    if (!current_user()) {
+        flash('error', 'Please sign in with an administrator account to continue.');
+        redirect('auth/login.php');
+    }
+    if ((current_user()['role'] ?? '') !== 'admin') {
         http_response_code(403);
-        exit('You do not have permission to access this page.');
+        $pageTitle = 'No access | Yucca Fabrics';
+        require __DIR__ . '/header.php';
+        echo '<section class="mx-auto max-w-2xl px-5 py-24 text-center"><span class="mx-auto grid h-16 w-16 place-items-center rounded-full bg-cream text-2xl text-forest"><i class="fa-solid fa-lock" aria-hidden="true"></i></span><h1 class="mt-6 font-serif text-4xl">This area is for the Yucca team</h1><p class="mt-3 text-sm text-gray-600">Your account doesn’t have access to the administration pages.</p><a class="mt-8 inline-block rounded-full bg-forest px-6 py-3 text-sm font-semibold text-white" href="' . e(url('account/dashboard.php')) . '">Go to my account</a></section>';
+        require __DIR__ . '/footer.php';
+        exit;
     }
 }
 
@@ -113,7 +122,7 @@ function cart_items(): array
     }
     $ids = array_map('intval', array_keys($cart));
     $placeholders = implode(',', array_fill(0, count($ids), '?'));
-    $stmt = db()->prepare("SELECT id, name, slug, price, sale_price, stock, image FROM products WHERE is_active = 1 AND id IN ({$placeholders})");
+    $stmt = db()->prepare("SELECT id, name, slug, price, sale_price, stock, unit, image FROM products WHERE is_active = 1 AND id IN ({$placeholders})");
     $stmt->execute($ids);
     $items = [];
     foreach ($stmt->fetchAll() as $product) {
@@ -189,9 +198,199 @@ function restore_user_cart(): void
     persist_cart();
 }
 
+// Neutral swatch photo, so a product without its own image never looks like another product.
+const PRODUCT_PLACEHOLDER_IMAGE = 'assets/images/fabrics/piki-17-fabric-samples.jpeg';
+
+/** Price markup for cards and the product page: sale price with the original struck through, plus the unit. */
+function product_price_html(array $product): string
+{
+    $unit = '<span class="text-xs font-normal text-gray-500"> / ' . e($product['unit'] ?? 'metre') . '</span>';
+    $price = (float) $product['price'];
+    $sale = $product['sale_price'] !== null ? (float) $product['sale_price'] : null;
+    if ($sale !== null && $sale < $price) {
+        return '<span class="text-clay">' . e(money($sale)) . '</span> <s class="text-xs font-normal text-gray-500">' . e(money($price)) . '</s>' . $unit;
+    }
+    return e(money($price)) . $unit;
+}
+
 function product_image(?string $image): string
 {
-    return $image ? url('uploads/products/' . rawurlencode(basename($image))) : 'https://images.unsplash.com/photo-1616486338812-3dadae4b4ace?auto=format&fit=crop&w=900&q=80';
+    return $image ? url('uploads/products/' . rawurlencode(basename($image))) : url(PRODUCT_PLACEHOLDER_IMAGE);
+}
+
+function fabric_image(string $file): string
+{
+    return url('assets/images/fabrics/' . rawurlencode(basename($file)));
+}
+
+function service_image(string $file): string
+{
+    return url('assets/images/services/' . rawurlencode(basename($file)));
+}
+
+/** Look, icon and longer copy for a service slug (see includes/service-details.php), merged over the defaults. */
+function service_details(string $slug): array
+{
+    static $details;
+    $details ??= require __DIR__ . '/service-details.php';
+    return ($details[$slug] ?? []) + $details['default'];
+}
+
+// Service categories booked through the consultation form rather than the project request form.
+const CONSULTATION_CATEGORY_SLUGS = ['fabric-sourcing', 'interior-styling'];
+const CONSULTATION_TYPES = ['Residential interior design', 'Commercial design', 'Living room styling', 'Bedroom styling', 'Office design', 'Fabric and colour selection'];
+
+function is_consultation_service(array $service): bool
+{
+    return in_array($service['category_slug'] ?? '', CONSULTATION_CATEGORY_SLUGS, true);
+}
+
+/** Services with their category name and slug, for the services and consultations pages. */
+function active_services(bool $consultationsOnly = false): array
+{
+    $services = db()->query('SELECT s.*, c.name AS category_name, c.slug AS category_slug FROM services s LEFT JOIN service_categories c ON c.id=s.category_id WHERE s.is_active=1 ORDER BY s.id')->fetchAll();
+    return $consultationsOnly ? array_values(array_filter($services, 'is_consultation_service')) : $services;
+}
+
+/** Whole-number price for chips and headlines, e.g. "KES 2,500". */
+function money_whole(float|int|string $amount): string
+{
+    return CURRENCY . ' ' . number_format((float) $amount);
+}
+
+/** Decorative yucca-leaf sprig echoing the logo; purely ornamental, so hidden from assistive tech. */
+function yucca_sprig_svg(string $class = ''): string
+{
+    $leaves = ['M100 195Q70 120 25 60Q85 115 100 195Z', 'M100 195Q80 110 55 25Q95 105 100 195Z', 'M100 195Q88 100 92 8Q108 100 100 195Z', 'M100 195Q120 110 148 28Q106 105 100 195Z', 'M100 195Q130 120 178 62Q118 118 100 195Z', 'M100 195Q60 160 8 140Q70 150 100 195Z', 'M100 195Q140 158 194 140Q130 150 100 195Z'];
+    $paths = implode('', array_map(fn(string $d): string => '<path d="' . $d . '"/>', $leaves));
+    return '<svg class="' . e($class) . '" viewBox="0 0 200 200" fill="currentColor" aria-hidden="true" focusable="false">' . $paths . '</svg>';
+}
+
+function journal_image(?string $image): string
+{
+    return $image ? url('uploads/blog/' . rawurlencode(basename($image))) : fabric_image('soho-inverted-leather.jpeg');
+}
+
+function read_minutes(string $body): int
+{
+    return max(1, (int) ceil(str_word_count(strip_tags($body)) / 200));
+}
+
+/**
+ * Journal article text to HTML. Everything is escaped first, then a tiny, safe subset of Markdown is applied:
+ * blank lines separate paragraphs, "## " starts a heading and "- " starts a bullet. Plain text still works.
+ */
+function journal_body_html(string $body): string
+{
+    $html = '';
+    $paragraph = [];
+    $list = [];
+    $flush = function () use (&$html, &$paragraph, &$list): void {
+        if ($paragraph) $html .= '<p>' . implode('<br>', array_map('e', $paragraph)) . '</p>';
+        if ($list) $html .= '<ul>' . implode('', array_map(fn(string $item): string => '<li>' . e($item) . '</li>', $list)) . '</ul>';
+        $paragraph = $list = [];
+    };
+    // Line by line, so a heading, its paragraph and a list can follow each other without blank lines.
+    foreach (explode("\n", str_replace("\r\n", "\n", trim($body))) as $line) {
+        $line = trim($line);
+        if ($line === '') {
+            $flush();
+        } elseif (str_starts_with($line, '## ')) {
+            $flush();
+            $html .= '<h2>' . e(substr($line, 3)) . '</h2>';
+        } elseif (str_starts_with($line, '- ')) {
+            if ($paragraph) $flush();
+            $list[] = substr($line, 2);
+        } else {
+            if ($list) $flush();
+            $paragraph[] = $line;
+        }
+    }
+    $flush();
+    return $html;
+}
+
+/** Latest published journal posts with their category, optionally excluding one post. */
+function latest_journal_posts(int $limit, int $excludeId = 0): array
+{
+    $stmt = db()->prepare("SELECT bp.*, bc.name AS category_name, bc.slug AS category_slug FROM blog_posts bp LEFT JOIN blog_categories bc ON bc.id=bp.category_id WHERE bp.status='published' AND bp.published_at<=NOW() AND bp.id<>? ORDER BY bp.published_at DESC LIMIT " . max(1, $limit));
+    $stmt->execute([$excludeId]);
+    return $stmt->fetchAll();
+}
+
+function payment_method_label(string $method): string
+{
+    return ['cod' => 'Cash on delivery', 'mpesa' => 'M-Pesa', 'bank_transfer' => 'Bank transfer'][$method] ?? ucfirst(str_replace('_', ' ', $method));
+}
+
+/** Coloured pill for order, payment, consultation and request statuses (dark text on a light tint for AA). */
+function status_badge(string $status): string
+{
+    $tones = [
+        'bg-[#FBF0D9] text-[#6B4A07]' => ['pending', 'new', 'unpaid', 'sent'],
+        'bg-[#DDEFF1] text-[#0F4A52]' => ['confirmed', 'processing', 'shipped', 'quoted', 'in_progress', 'approved', 'accepted'],
+        'bg-[#DFF0E7] text-[#17442F]' => ['delivered', 'paid', 'completed', 'replied'],
+        'bg-[#F6E1DE] text-[#7A2E22]' => ['cancelled', 'failed', 'declined', 'rejected', 'expired'],
+    ];
+    $class = 'bg-gray-100 text-gray-700';
+    foreach ($tones as $tone => $statuses) if (in_array($status, $statuses, true)) $class = $tone;
+    return '<span class="inline-flex items-center gap-1.5 whitespace-nowrap rounded-full px-2.5 py-1 text-xs font-semibold ' . $class . '"><span class="h-1.5 w-1.5 rounded-full bg-current" aria-hidden="true"></span>' . e(ucfirst(str_replace('_', ' ', $status))) . '</span>';
+}
+
+/** Success, info or error message box used above forms and for flash messages. */
+function form_alert(string $message, string $type = 'error'): string
+{
+    [$class, $icon, $role] = match ($type) {
+        'success' => ['bg-[#DFF0E7] text-[#17442F]', 'fa-circle-check', 'status'],
+        'info' => ['bg-[#DDEFF1] text-[#0F4A52]', 'fa-circle-info', 'status'],
+        default => ['bg-[#F6E1DE] text-[#7A2E22]', 'fa-circle-exclamation', 'alert'],
+    };
+    return '<p class="flex items-start gap-3 rounded-2xl p-4 text-sm ' . $class . '" role="' . $role . '"><i class="fa-solid ' . $icon . ' mt-0.5" aria-hidden="true"></i><span>' . e($message) . '</span></p>';
+}
+
+/** Password input with a show/hide button (wired up in main.js via data-toggle-password). */
+function password_input_html(string $name, string $id, string $label, string $autocomplete, int $minLength = 0, string $hint = ''): string
+{
+    $hintId = $hint !== '' ? $id . '-hint' : '';
+    return '<div><label class="text-sm font-medium" for="' . e($id) . '">' . e($label) . '</label><div class="relative mt-1">'
+        . '<input class="form-control pr-12" type="password" id="' . e($id) . '" name="' . e($name) . '" required autocomplete="' . e($autocomplete) . '"' . ($minLength ? ' minlength="' . $minLength . '"' : '') . ($hintId ? ' aria-describedby="' . e($hintId) . '"' : '') . '>'
+        . '<button type="button" class="absolute inset-y-0 right-0 grid w-12 place-items-center rounded-r-lg text-gray-500 transition hover:text-forest" data-toggle-password aria-label="Show password" aria-pressed="false"><i class="fa-regular fa-eye" aria-hidden="true"></i></button></div>'
+        . ($hint !== '' ? '<p class="mt-1.5 text-xs text-gray-500" id="' . e($hintId) . '">' . e($hint) . '</p>' : '') . '</div>';
+}
+
+/** Bag → details & payment → confirmation progress bar for the purchase journey (1-based step). */
+function checkout_steps(int $current): string
+{
+    $html = '<ol class="mt-6 flex items-center gap-2 text-xs font-semibold sm:gap-3 sm:text-sm" aria-label="Checkout progress">';
+    foreach (['Bag', 'Details & payment', 'Confirmation'] as $index => $label) {
+        $step = $index + 1;
+        $state = $step < $current ? 'done' : ($step === $current ? 'current' : 'next');
+        if ($index > 0) $html .= '<li class="h-px w-6 bg-ink/20 sm:w-10" aria-hidden="true"></li>';
+        $badge = $state === 'done' ? '<i class="fa-solid fa-check text-[10px]" aria-hidden="true"></i>' : (string) $step;
+        $tone = $state === 'next' ? 'bg-white text-gray-500 ring-1 ring-ink/15' : 'bg-forest text-white';
+        $html .= '<li class="flex items-center gap-2' . ($state === 'next' ? ' text-gray-500' : '') . '"' . ($state === 'current' ? ' aria-current="step"' : '') . '><span class="grid h-7 w-7 place-items-center rounded-full ' . $tone . '">' . $badge . '</span><span class="' . ($state === 'current' ? '' : 'hidden sm:inline') . '">' . e($label) . '</span></li>';
+    }
+    return $html . '</ol>';
+}
+
+/** Real counts from the catalogue, plus milestones only when an admin has entered verified figures in settings. */
+function site_numbers(): array
+{
+    $count = fn(string $sql): int => (int) db()->query($sql)->fetchColumn();
+    return array_filter([
+        'Fabrics in the collection' => $count('SELECT COUNT(*) FROM products WHERE is_active=1') ?: '',
+        'Fabric types, from bouclé to velvet' => $count("SELECT COUNT(DISTINCT material) FROM products WHERE is_active=1 AND material IS NOT NULL AND material<>''") ?: '',
+        'Upholstery and design services' => $count('SELECT COUNT(*) FROM services WHERE is_active=1') ?: '',
+        'Years of experience' => setting('years_experience'),
+        'Completed projects' => setting('completed_projects'),
+        'Happy customers' => setting('verified_customers'),
+    ], fn($value) => $value !== '');
+}
+
+function fabric_collection(): array
+{
+    static $collection;
+    return $collection ??= require __DIR__ . '/fabric-collection.php';
 }
 
 function save_uploaded_image(string $field, string $folder): ?string
@@ -234,6 +433,29 @@ function setting(string $key, string $fallback = ''): string
         }
     }
     return (string) ($settings[$key] ?? $fallback);
+}
+
+function whatsapp_url(): string
+{
+    if (setting('whatsapp_url') !== '') return setting('whatsapp_url');
+    // wa.me needs the international format without "+", so a local 07… number becomes 2547….
+    $number = preg_replace('/\D/', '', setting('business_phone', '+254 700 000 000'));
+    if (str_starts_with($number, '0')) $number = '254' . substr($number, 1);
+    return 'https://wa.me/' . $number;
+}
+
+/**
+ * Footer social icons. Until real pages are entered in Admin → Website settings, each link falls back to the
+ * platform's home page as a placeholder (`?:` so a saved-but-blank setting also falls back).
+ */
+function social_links(): array
+{
+    return [
+        ['label' => 'Instagram', 'icon' => 'fa-instagram', 'url' => setting('instagram_url') ?: 'https://www.instagram.com/'],
+        ['label' => 'Facebook', 'icon' => 'fa-facebook-f', 'url' => setting('facebook_url') ?: 'https://www.facebook.com/'],
+        ['label' => 'TikTok', 'icon' => 'fa-tiktok', 'url' => setting('tiktok_url') ?: 'https://www.tiktok.com/'],
+        ['label' => 'WhatsApp', 'icon' => 'fa-whatsapp', 'url' => whatsapp_url()],
+    ];
 }
 
 function json_response(array $payload, int $status = 200): never

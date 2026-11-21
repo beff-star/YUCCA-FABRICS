@@ -1,3 +1,5 @@
+-- Read this file as UTF-8 whatever the client default is (prevents "D├®cor"-style mojibake on Windows).
+SET NAMES utf8mb4;
 CREATE DATABASE IF NOT EXISTS yucca_fabrics_db CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 USE yucca_fabrics_db;
 

@@ -1,5 +1,10 @@
 <?php
-require_once __DIR__.'/includes/functions.php';$pageTitle='Terms of use | Yucca Fabrics';require __DIR__.'/includes/header.php';
-?>
-<article class="mx-auto max-w-3xl px-5 py-16"><p class="eyebrow">The important details</p><h1 class="mt-3 font-serif text-4xl">Terms of use</h1><p class="mt-6 text-sm leading-7 text-gray-600">Product descriptions, availability and pricing are provided as accurately as possible and may be updated. Placing an order submits a purchase request; orders are confirmed after review and payment arrangements. Fabric is sold by the unit displayed on each product listing.</p><h2 class="mt-8 font-serif text-2xl">Orders and services</h2><p class="mt-3 text-sm leading-7 text-gray-600">Delivery timing, service scope and quotations are confirmed with each customer. A consultation request is not confirmed until Yucca Fabrics contacts you. Please ensure delivery and project details are accurate.</p><h2 class="mt-8 font-serif text-2xl">Contact</h2><p class="mt-3 text-sm leading-7 text-gray-600">Questions about these terms? <a class="underline" href="<?= e(url('contact.php')) ?>">Contact our team</a>. These draft terms should be reviewed for your business and applicable local law before launch.</p></article>
-<?php require __DIR__.'/includes/footer.php'; ?>
+require_once __DIR__ . '/includes/functions.php';
+$pageTitle = 'Terms of use | Yucca Fabrics';
+$legalTitle = 'Terms of use';
+$legalActive = 'terms';
+$legalDraftNote = 'These draft terms should be reviewed for your business and applicable local law before launch.';
+$legalBody = '<p>Product descriptions, availability and pricing are provided as accurately as possible and may be updated. Placing an order submits a purchase request; orders are confirmed after review and payment arrangements. Fabric is sold by the unit displayed on each product listing.</p>'
+    . '<h2>Orders and services</h2><p>Delivery timing, service scope and quotations are confirmed with each customer. A consultation request is not confirmed until Yucca Fabrics contacts you. Please ensure delivery and project details are accurate.</p>'
+    . '<h2>Contact</h2><p>Questions about these terms? <a href="' . e(url('contact.php')) . '">Contact our team</a>.</p>';
+require __DIR__ . '/includes/legal-page.php';

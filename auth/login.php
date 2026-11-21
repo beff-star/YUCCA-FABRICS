@@ -28,10 +28,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 }
 $pageTitle = 'Sign in | Yucca Fabrics';
-require __DIR__ . '/../includes/header.php';
+$authEyebrow = 'Your Yucca account';
+$authTitle = 'Welcome back';
+$authIntro = 'Sign in to follow your orders, bookings and saved fabrics.';
+require __DIR__ . '/../includes/auth-start.php';
 ?>
-<section class="mx-auto max-w-md px-5 py-20"><p class="eyebrow">Your Yucca account</p><h1 class="mt-3 font-serif text-4xl">Welcome back</h1>
-<?php if ($error): ?><p class="mt-5 rounded bg-red-50 p-3 text-sm text-red-800"><?= e($error) ?></p><?php endif; ?>
-<form method="post" class="mt-8 grid gap-4"><input type="hidden" name="csrf_token" value="<?= e(csrf_token()) ?>"><label class="text-sm">Email<input class="form-control mt-1" type="email" name="email" required autocomplete="email"></label><label class="text-sm">Password<input class="form-control mt-1" type="password" name="password" required autocomplete="current-password"></label><button class="rounded-full bg-forest px-6 py-3 font-semibold text-white">Sign in</button></form>
-<div class="mt-5 flex justify-between text-sm"><a class="underline" href="<?= e(url('auth/forgot-password.php')) ?>">Forgot password?</a><a class="underline" href="<?= e(url('auth/register.php')) ?>">Create an account</a></div></section>
-<?php require __DIR__ . '/../includes/footer.php'; ?>
+<?php if ($error): ?><div class="mb-5"><?= form_alert($error) ?></div><?php endif; ?>
+<form method="post" class="grid gap-5">
+    <input type="hidden" name="csrf_token" value="<?= e(csrf_token()) ?>">
+    <label class="text-sm font-medium">Email<input class="form-control mt-1" type="email" name="email" required autocomplete="email" value="<?= e($_POST['email'] ?? '') ?>"></label>
+    <?= password_input_html('password', 'login-password', 'Password', 'current-password') ?>
+    <div class="-mt-2 text-right"><a class="text-sm font-medium text-forest underline-offset-4 hover:underline" href="<?= e(url('auth/forgot-password.php')) ?>">Forgot your password?</a></div>
+    <button class="rounded-full bg-forest px-6 py-3.5 font-semibold text-white transition hover:bg-olive">Sign in</button>
+</form>
+<p class="mt-8 rounded-2xl bg-cream p-4 text-center text-sm">New to Yucca? <a class="font-semibold text-forest underline" href="<?= e(url('auth/register.php')) ?>">Create an account</a></p>
+<?php require __DIR__ . '/../includes/auth-end.php'; ?>

@@ -32,17 +32,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 }
 $pageTitle = 'Create an account | Yucca Fabrics';
-require __DIR__ . '/../includes/header.php';
+$authEyebrow = 'Welcome to Yucca';
+$authTitle = 'Create your account';
+$authIntro = 'Keep track of orders, service requests and consultations in one place.';
+require __DIR__ . '/../includes/auth-start.php';
 ?>
-<section class="mx-auto max-w-xl px-5 py-16"><p class="eyebrow">Welcome to Yucca</p><h1 class="mt-3 font-serif text-4xl">Create your account</h1><p class="mt-3 text-sm text-gray-600">Keep track of orders, service requests and consultations.</p>
-<?php foreach ($errors as $error): ?><p class="mt-4 rounded bg-red-50 p-3 text-sm text-red-800"><?= e($error) ?></p><?php endforeach; ?>
-<form method="post" class="mt-8 grid gap-4"><input type="hidden" name="csrf_token" value="<?= e(csrf_token()) ?>">
-<label class="text-sm">Full name<input class="form-control mt-1" name="name" required maxlength="150" value="<?= e($_POST['name'] ?? '') ?>"></label>
-<label class="text-sm">Username<input class="form-control mt-1" name="username" required minlength="3" maxlength="60" autocomplete="username" value="<?= e($_POST['username'] ?? '') ?>"></label>
-<label class="text-sm">Email<input class="form-control mt-1" type="email" name="email" required autocomplete="email" value="<?= e($_POST['email'] ?? '') ?>"></label>
-<label class="text-sm">Phone (optional)<input class="form-control mt-1" type="tel" name="phone" value="<?= e($_POST['phone'] ?? '') ?>"></label>
-<label class="text-sm">Password<input class="form-control mt-1" type="password" name="password" required minlength="10" autocomplete="new-password"></label>
-<label class="flex items-start gap-2 text-sm"><input type="checkbox" name="terms" required class="mt-1"><span>I agree to the <a class="underline" href="<?= e(url('terms.php')) ?>">terms</a> and <a class="underline" href="<?= e(url('privacy-policy.php')) ?>">privacy policy</a>.</span></label>
-<button class="rounded-full bg-forest px-6 py-3 font-semibold text-white">Create account</button></form>
-<p class="mt-6 text-sm">Already have an account? <a class="underline" href="<?= e(url('auth/login.php')) ?>">Sign in</a></p></section>
-<?php require __DIR__ . '/../includes/footer.php'; ?>
+<?php foreach ($errors as $error): ?><div class="mb-3"><?= form_alert($error) ?></div><?php endforeach; ?>
+<form method="post" class="mt-2 grid gap-5 sm:grid-cols-2">
+    <input type="hidden" name="csrf_token" value="<?= e(csrf_token()) ?>">
+    <label class="text-sm font-medium sm:col-span-2">Full name<input class="form-control mt-1" name="name" required maxlength="150" autocomplete="name" value="<?= e($_POST['name'] ?? '') ?>"></label>
+    <label class="text-sm font-medium">Username<input class="form-control mt-1" name="username" required minlength="3" maxlength="60" pattern="[A-Za-z0-9_]{3,60}" autocomplete="username" value="<?= e($_POST['username'] ?? '') ?>" aria-describedby="username-hint"><span class="mt-1.5 block text-xs font-normal text-gray-500" id="username-hint">Letters, numbers and underscores.</span></label>
+    <label class="text-sm font-medium">Phone (optional)<input class="form-control mt-1" type="tel" name="phone" autocomplete="tel" value="<?= e($_POST['phone'] ?? '') ?>"></label>
+    <label class="text-sm font-medium sm:col-span-2">Email<input class="form-control mt-1" type="email" name="email" required autocomplete="email" value="<?= e($_POST['email'] ?? '') ?>"></label>
+    <div class="sm:col-span-2"><?= password_input_html('password', 'register-password', 'Password', 'new-password', 10, 'At least 10 characters, with an uppercase letter, a lowercase letter and a number.') ?></div>
+    <label class="flex items-start gap-3 text-sm sm:col-span-2"><input type="checkbox" name="terms" required class="mt-0.5 h-4 w-4 accent-[#3F5320]"<?= isset($_POST['terms']) ? ' checked' : '' ?>><span>I agree to the <a class="font-semibold text-forest underline" href="<?= e(url('terms.php')) ?>">terms</a> and <a class="font-semibold text-forest underline" href="<?= e(url('privacy-policy.php')) ?>">privacy policy</a>.</span></label>
+    <button class="rounded-full bg-forest px-6 py-3.5 font-semibold text-white transition hover:bg-olive sm:col-span-2">Create account</button>
+</form>
+<p class="mt-8 rounded-2xl bg-cream p-4 text-center text-sm">Already have an account? <a class="font-semibold text-forest underline" href="<?= e(url('auth/login.php')) ?>">Sign in</a></p>
+<?php require __DIR__ . '/../includes/auth-end.php'; ?>
