@@ -1,0 +1,300 @@
+---
+import { env } from 'cloudflare:workers';
+import { actions } from 'astro:actions';
+import BookingForm from '~/components/BookingForm.astro';
+import CourseCard from '~/components/CourseCard.astro';
+import FormResult from '~/components/FormResult.astro';
+import Icon from '~/components/Icon.astro';
+import YuccaSprig from '~/components/YuccaSprig.astro';
+import { BOOKING_GUIDELINES, PLATFORM_DETAILS, PLATFORM_LABELS, TRAINING_RULES, tracks, type TrainingTrack } from '~/data/courses';
+import { serviceImage } from '~/data/service-details';
+import BaseLayout from '~/layouts/BaseLayout.astro';
+import { formatMoneyWhole } from '~/lib/money';
+import { activeCourses } from '~/lib/training';
+
+const courses = await activeCourses();
+if (courses.length === 0) return Astro.rewrite('/404');
+const params = Astro.url.searchParams;
+const trackParam = params.get('track');
+const activeTrack = trackParam && trackParam in tracks ? (trackParam as TrainingTrack) : null;
+const minRate = Math.min(...courses.map((c) => c.hourlyRateCents));
+const maxRate = Math.max(...courses.map((c) => c.hourlyRateCents));
+
+// Cost calculator (works as a plain GET form without JS).
+const calcCourse = courses.find((c) => c.slug === params.get('calc')) ?? courses[0]!;
+const calcHoursRaw = Number.parseInt(params.get('calc_hours') ?? '1', 10);
+const calcHours = calcHoursRaw >= 1 && calcHoursRaw <= TRAINING_RULES.maxHours ? calcHoursRaw : 1;
+
+const steps = [
+  ['fa6-solid:list-check', 'Choose a course and time', 'Pick what you want to learn, how long, and a time that suits you.'],
+  ['fa6-solid:mobile-screen-button', 'Pay with M-Pesa', `Your time is held for ${TRAINING_RULES.holdMinutes} minutes while you approve the prompt on your phone.`],
+  ['fa6-solid:envelope-open-text', 'Get your link', 'Your confirmation, calendar invite and meeting link arrive by email.'],
+  ['fa6-solid:chalkboard-user', 'Learn live', 'Join from your phone or laptop. Ask anything, show us your pieces and spaces.'],
+];
+const prepare = [
+  ['fa6-solid:laptop', 'A device with a camera', 'A phone, tablet or laptop. Headphones help you hear clearly.'],
+  ['fa6-solid:wifi', 'A steady connection', 'Sit where your signal is strongest. If video struggles, we can switch to audio.'],
+  ['fa6-solid:camera', 'Photos and measurements', 'Of the furniture or room you want to talk about, ready to share on screen.'],
+  ['fa6-solid:pen-to-square', 'Your questions', 'Jot them down beforehand so nothing gets forgotten.'],
+];
+const faqs = [
+  ['Do I need special software?', 'No. Google Meet runs in your web browser, Zoom works in its free app or browser, and WhatsApp video works on your phone.'],
+  ['How do I pay?', 'After you choose a time we send an M-Pesa prompt to your phone. Payment is required before the session, and your booking is confirmed as soon as it’s received.'],
+  ['Can I book more than one hour?', `Yes. Choose 1 to ${TRAINING_RULES.maxHours} hours in a single session; each hour is charged at the course’s hourly rate. For a longer programme, contact us.`],
+  ['Are sessions one-to-one?', 'Booked sessions are for you (or you and your household). Training for a team, class or group is quoted separately.'],
+  ['Can I show you my furniture or room?', 'Please do. Share your screen, hold your camera up to a piece, or send photos on WhatsApp before the session.'],
+  ['What if I need to change the time?', 'Contact us as early as you can before your session and we’ll help you find another time.'],
+];
+const siteUrl = env.SITE_URL || Astro.url.origin;
+const structuredData = [
+  {
+    '@context': 'https://schema.org', '@type': 'ItemList', name: 'Virtual furniture, upholstery and interior design classes',
+    itemListElement: courses.map((course, index) => ({ '@type': 'ListItem', position: index + 1, url: new URL(`/classes/${course.slug}`, siteUrl).toString() })),
+  },
+  ...courses.map((course) => ({
+    '@context': 'https://schema.org', '@type': 'Course', name: course.title, description: course.summary,
+    url: new URL(`/classes/${course.slug}`, siteUrl).toString(),
+    provider: { '@type': 'Organization', name: 'Yucca Homeware Consultant', sameAs: siteUrl },
+    offers: { '@type': 'Offer', category: 'Paid', price: (course.hourlyRateCents / 100).toFixed(0), priceCurrency: 'KES', url: new URL(`/classes/${course.slug}#book`, siteUrl).toString() },
+    hasCourseInstance: { '@type': 'CourseInstance', courseMode: 'online', courseWorkload: 'PT1H' },
+  })),
+];
+---
+<BaseLayout title="Online Upholstery & Interior Design Classes, Kenya | Yucca Homeware" description={`Live one-to-one virtual training from Yucca Homeware Consultant on Google Meet, Zoom or WhatsApp video. ${courses.length} courses from ${formatMoneyWhole(minRate)} per hour, paid with M-Pesa.`} image={serviceImage('design-desk-swatches.jpg')} structuredData={structuredData}>
+  <!-- Hero -->
+  <section class="relative overflow-hidden bg-night text-white">
+    <YuccaSprig class="pointer-events-none absolute -left-24 -top-24 h-[28rem] w-[28rem] text-white/[.04]" />
+    <div class="relative mx-auto grid max-w-7xl items-center gap-14 px-5 py-16 lg:grid-cols-[1.05fr_.95fr] lg:py-24">
+      <div>
+        <p class="eyebrow">Virtual training · Yucca Homeware Consultant</p>
+        <h1 class="mt-5 font-serif text-4xl leading-[1.08] sm:text-5xl lg:text-6xl">Learn furniture, upholstery &amp; interior design, <span class="text-wheat">live from home.</span></h1>
+        <p class="mt-6 max-w-xl text-base leading-8 text-white/85">Build your knowledge. Understand quality. Make confident decisions about your home. One-to-one sessions with a practising consultant, booked by the hour.</p>
+        <div class="mt-8 flex flex-wrap gap-3">
+          <a href="#courses" class="rounded-full bg-wheat px-6 py-3 text-sm font-semibold text-night shadow-md transition hover:bg-white">Browse courses</a>
+          <a href="#book" class="rounded-full border border-white/40 px-6 py-3 text-sm font-semibold transition hover:bg-white/10">Book a session</a>
+        </div>
+        <ul class="mt-10 flex flex-wrap gap-3 text-xs font-medium">
+          <li class="inline-flex items-center gap-2 rounded-full bg-white/10 px-4 py-2 ring-1 ring-white/15"><Icon name="fa6-solid:video" class="text-wheat" />Live on Google Meet, Zoom or WhatsApp</li>
+          <li class="inline-flex items-center gap-2 rounded-full bg-white/10 px-4 py-2 ring-1 ring-white/15"><Icon name="fa6-solid:tag" class="text-wheat" />From {formatMoneyWhole(minRate)}/hour</li>
+          <li class="inline-flex items-center gap-2 rounded-full bg-white/10 px-4 py-2 ring-1 ring-white/15"><Icon name="fa6-solid:mobile-screen-button" class="text-wheat" />Pay with M-Pesa</li>
+        </ul>
+      </div>
+      <div class="relative mx-auto w-full max-w-lg" aria-hidden="true">
+        <span class="absolute -right-6 -top-6 h-36 w-36 rounded-full bg-clay/90"></span>
+        <span class="absolute -bottom-8 -left-8 h-44 w-44 rounded-full bg-teal"></span>
+        <div class="relative grid h-[420px] grid-cols-5 grid-rows-6 gap-3 sm:h-[500px]">
+          <img src={serviceImage('upholstery-workshop-chair.jpg')} alt="" class="col-span-3 row-span-6 h-full w-full rounded-3xl object-cover shadow-2xl" />
+          <img src={serviceImage('design-desk-swatches.jpg')} alt="" class="col-span-2 row-span-3 h-full w-full rounded-3xl object-cover shadow-2xl" />
+          <img src={serviceImage('fabric-consultation-samples.jpg')} alt="" class="col-span-2 row-span-3 h-full w-full rounded-3xl object-cover shadow-2xl" />
+        </div>
+        <!-- An illustration of a session card (not live data). -->
+        <div class="absolute -bottom-6 left-4 right-4 rounded-2xl bg-white p-4 text-ink shadow-2xl sm:left-auto sm:right-6 sm:w-72">
+          <div class="flex items-center justify-between text-[11px] font-semibold uppercase tracking-wider text-gray-500"><span class="inline-flex items-center gap-1.5"><span class="h-2 w-2 rounded-full bg-[#2f9e5b] motion-safe:animate-pulse"></span>Live session</span><span>1 hr</span></div>
+          <p class="mt-2 font-serif text-lg leading-snug">Upholstery &amp; fabric education</p>
+          <div class="mt-3 flex items-center gap-2 text-xs text-gray-600"><span class="grid h-7 w-7 place-items-center rounded-full bg-forest text-[10px] font-bold text-white">YH</span>Yucca Homeware Consultant<Icon name="fa6-solid:video" class="ml-auto text-teal" /></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Tracks -->
+  <section class="py-20">
+    <div class="mx-auto max-w-7xl px-5">
+      <div class="mx-auto max-w-2xl text-center"><p class="eyebrow">Three ways to learn</p><h2 class="mt-3 font-serif text-4xl sm:text-5xl">From the frame to the finished room</h2><p class="mt-4 text-sm leading-7 text-gray-600">Whether you’re buying your first sofa, restoring a family chair or designing for clients, there’s a session for where you are.</p></div>
+      <div class="mt-12 grid gap-6 md:grid-cols-3">
+        {(Object.entries(tracks) as [TrainingTrack, (typeof tracks)[TrainingTrack]][]).map(([key, track]) => {
+          const inTrack = courses.filter((course) => course.track === key);
+          return (
+            <a href={`?track=${key}#courses`} data-track-link={key} class="group relative overflow-hidden rounded-3xl p-7 text-white shadow-xl shadow-ink/10 transition motion-safe:hover:-translate-y-1" style={`background-color:${track.bg}`}>
+              <YuccaSprig class="pointer-events-none absolute -bottom-10 -right-10 h-40 w-40 text-white/10" />
+              <span class="relative grid h-14 w-14 place-items-center rounded-2xl bg-white text-xl" style={`color:${track.bg}`}><Icon name={track.icon} /></span>
+              <h3 class="relative mt-6 font-serif text-2xl">{track.label}</h3>
+              <p class="relative mt-2 text-sm leading-6 text-white/90">{track.blurb}</p>
+              <p class="relative mt-6 flex items-center justify-between text-sm font-semibold"><span>{inTrack.length} {inTrack.length === 1 ? 'course' : 'courses'}{inTrack.length > 0 && ` · from ${formatMoneyWhole(Math.min(...inTrack.map((c) => c.hourlyRateCents)))}/hr`}</span><Icon name="fa6-solid:arrow-right" class="text-xs transition group-hover:translate-x-1" /></p>
+            </a>
+          );
+        })}
+      </div>
+    </div>
+  </section>
+
+  <!-- Courses -->
+  <section id="courses" class="scroll-mt-24 bg-cream py-20">
+    <div class="mx-auto max-w-7xl px-5">
+      <div class="flex flex-wrap items-end justify-between gap-6"><div><p class="eyebrow">The courses</p><h2 class="mt-3 font-serif text-4xl">Choose what you’d like to learn</h2></div>
+        <nav class="flex flex-wrap gap-2" aria-label="Filter courses by track">
+          <a href="/classes#courses" data-filter="" class:list={['rounded-full px-4 py-2 text-xs font-semibold transition', !activeTrack ? 'bg-forest text-white' : 'bg-white hover:bg-sand']} aria-current={!activeTrack ? 'true' : undefined}>All courses</a>
+          {(Object.entries(tracks) as [TrainingTrack, (typeof tracks)[TrainingTrack]][]).map(([key, track]) => <a href={`?track=${key}#courses`} data-filter={key} class:list={['rounded-full px-4 py-2 text-xs font-semibold transition', activeTrack === key ? 'bg-forest text-white' : 'bg-white hover:bg-sand']} aria-current={activeTrack === key ? 'true' : undefined}>{track.label}</a>)}
+        </nav>
+      </div>
+      <div class="mt-10 grid gap-8 sm:grid-cols-2 lg:grid-cols-3" data-course-grid>
+        {courses.map((course) => <CourseCard course={course} hidden={Boolean(activeTrack) && course.track !== activeTrack} />)}
+      </div>
+    </div>
+  </section>
+
+  <!-- How it works -->
+  <section class="py-20">
+    <div class="mx-auto max-w-7xl px-5">
+      <div class="mx-auto max-w-2xl text-center"><p class="eyebrow">How a virtual session works</p><h2 class="mt-3 font-serif text-4xl">Four simple steps</h2></div>
+      <ol class="relative mt-14 grid gap-10 md:grid-cols-4 md:gap-6">
+        <span class="absolute left-[12.5%] right-[12.5%] top-8 hidden h-0.5 bg-gradient-to-r from-pine via-teal to-terracotta md:block" aria-hidden="true"></span>
+        {steps.map(([icon, title, text], index) => <li class="relative text-center"><span class="relative mx-auto grid h-16 w-16 place-items-center rounded-full bg-white text-xl text-forest shadow-lg ring-4 ring-sand"><Icon name={icon!} /><span class="absolute -right-1 -top-1 grid h-6 w-6 place-items-center rounded-full bg-clay text-[11px] font-bold text-white">{index + 1}</span></span><h3 class="mt-5 text-lg font-semibold">{title}</h3><p class="mx-auto mt-2 max-w-xs text-sm leading-6 text-gray-600">{text}</p></li>)}
+      </ol>
+    </div>
+  </section>
+
+  <!-- Rates + calculator -->
+  <section id="rates" class="scroll-mt-24 bg-white py-20">
+    <div class="mx-auto grid max-w-7xl gap-10 px-5 lg:grid-cols-[1.2fr_.8fr]">
+      <div>
+        <p class="eyebrow">Hourly fee structure</p>
+        <h2 class="mt-3 font-serif text-4xl">Simple, transparent rates</h2>
+        <div class="mt-8 overflow-hidden rounded-3xl ring-1 ring-ink/10">
+          <table class="w-full text-left text-sm">
+            <caption class="sr-only">Hourly rates for virtual training and consultation</caption>
+            <thead class="bg-cream text-xs uppercase tracking-[.14em] text-gray-600"><tr><th scope="col" class="px-5 py-4 font-semibold">Service</th><th scope="col" class="px-5 py-4 text-right font-semibold">Hourly rate</th></tr></thead>
+            <tbody class="divide-y divide-ink/10">
+              {courses.map((course) => <tr class="transition hover:bg-sand"><th scope="row" class="px-5 py-4 font-medium"><a class="hover:text-forest hover:underline" href={`/classes/${course.slug}`}>{course.title}</a></th><td class="whitespace-nowrap px-5 py-4 text-right font-semibold text-forest">{formatMoneyWhole(course.hourlyRateCents)}</td></tr>)}
+            </tbody>
+          </table>
+        </div>
+        <p class="mt-4 text-xs text-gray-500">Rates are per hour, per session. Group training is quoted separately.</p>
+      </div>
+      <form method="get" action="#rates" class="h-fit rounded-3xl bg-forest p-7 text-white shadow-xl sm:p-8" data-calculator data-rates={JSON.stringify(Object.fromEntries(courses.map((c) => [c.slug, c.hourlyRateCents])))}>
+        <p class="eyebrow">Cost calculator</p>
+        <h3 class="mt-2 font-serif text-2xl">What will my session cost?</h3>
+        <label class="mt-6 block text-sm font-medium">Course<select name="calc" class="form-control mt-1 text-ink">{courses.map((course) => <option value={course.slug} selected={course.slug === calcCourse.slug}>{course.title}</option>)}</select></label>
+        <label class="mt-4 block text-sm font-medium">Hours<select name="calc_hours" class="form-control mt-1 text-ink">{Array.from({ length: TRAINING_RULES.maxHours }, (_, i) => i + 1).map((n) => <option value={n} selected={n === calcHours}>{n} {n === 1 ? 'hour' : 'hours'}</option>)}</select></label>
+        <p class="mt-6 text-sm text-white/80">Total</p>
+        <p class="font-serif text-5xl text-wheat" data-calc-total aria-live="polite">{formatMoneyWhole(calcCourse.hourlyRateCents * calcHours)}</p>
+        <p class="mt-1 text-xs text-white/75" data-calc-breakdown>{calcHours} × {formatMoneyWhole(calcCourse.hourlyRateCents)} per hour</p>
+        <div class="mt-6 flex flex-wrap gap-3">
+          <noscript><button class="rounded-full border border-white/40 px-5 py-2.5 text-sm font-semibold">Calculate</button></noscript>
+          <a href={`/classes/${calcCourse.slug}?hours=${calcHours}#book`} class="rounded-full bg-wheat px-5 py-2.5 text-sm font-semibold text-night transition hover:bg-white" data-calc-book>Book this session</a>
+        </div>
+      </form>
+    </div>
+  </section>
+
+  <!-- Booking -->
+  <section id="book" class="scroll-mt-24 bg-cream py-20">
+    <div class="mx-auto max-w-7xl px-5">
+      <div class="max-w-2xl"><p class="eyebrow">Book a session</p><h2 class="mt-3 font-serif text-4xl">Pick a course and a time</h2><p class="mt-3 text-sm leading-7 text-gray-600">Choose your course, how long you’d like, and a time that suits you. You’ll pay with M-Pesa on the next page.</p></div>
+      <div class="mt-10"><BookingForm courses={courses} /></div>
+    </div>
+  </section>
+
+  <!-- Guidelines + prepare -->
+  <section class="py-20">
+    <div class="mx-auto grid max-w-7xl gap-8 px-5 lg:grid-cols-2">
+      <div class="rounded-3xl bg-white p-8 shadow-sm ring-1 ring-ink/5">
+        <span class="grid h-12 w-12 place-items-center rounded-2xl bg-forest text-lg text-white"><Icon name="fa6-solid:clipboard-list" /></span>
+        <h2 class="mt-5 font-serif text-3xl">Booking guidelines</h2>
+        <ul class="mt-5 grid gap-3 text-sm leading-6">{BOOKING_GUIDELINES.map((line) => <li class="flex gap-3"><Icon name="fa6-solid:circle-check" class="mt-1 shrink-0 text-sage" />{line}</li>)}</ul>
+      </div>
+      <div class="rounded-3xl bg-night p-8 text-white shadow-sm">
+        <span class="grid h-12 w-12 place-items-center rounded-2xl bg-wheat text-lg text-night"><Icon name="fa6-solid:mug-hot" /></span>
+        <h2 class="mt-5 font-serif text-3xl">Before your session</h2>
+        <ul class="mt-5 grid gap-4 sm:grid-cols-2">{prepare.map(([icon, title, text]) => <li><Icon name={icon!} class="text-lg text-wheat" /><h3 class="mt-2 font-semibold">{title}</h3><p class="mt-1 text-sm leading-6 text-white/80">{text}</p></li>)}</ul>
+      </div>
+    </div>
+  </section>
+
+  <!-- Platforms -->
+  <section class="bg-white py-16">
+    <div class="mx-auto max-w-7xl px-5">
+      <div class="mx-auto max-w-2xl text-center"><p class="eyebrow">Meet the way you like</p><h2 class="mt-3 font-serif text-3xl sm:text-4xl">Google Meet, Zoom or WhatsApp video</h2></div>
+      <div class="mt-10 grid gap-5 md:grid-cols-3">
+        {(Object.keys(PLATFORM_LABELS) as (keyof typeof PLATFORM_LABELS)[]).map((key) => <div class="rounded-3xl bg-sand p-6 ring-1 ring-ink/5"><Icon name={PLATFORM_DETAILS[key].icon} class="text-2xl text-forest" /><h3 class="mt-3 font-serif text-xl">{PLATFORM_LABELS[key]}</h3><p class="mt-2 text-sm leading-6 text-gray-600">{PLATFORM_DETAILS[key].note}</p></div>)}
+      </div>
+    </div>
+  </section>
+
+  <!-- Group training -->
+  <section id="group" class="scroll-mt-24 bg-cream py-20">
+    <div class="mx-auto max-w-7xl px-5">
+      <div class="overflow-hidden rounded-3xl bg-white shadow-xl shadow-ink/10 lg:grid lg:grid-cols-[.85fr_1.15fr]">
+        <aside class="relative overflow-hidden bg-clay p-8 text-white sm:p-10">
+          <YuccaSprig class="pointer-events-none absolute -bottom-10 -right-10 h-64 w-64 text-white/10" />
+          <div class="relative">
+            <p class="text-[11px] font-semibold uppercase tracking-[.22em] text-white/90">Group training</p>
+            <h2 class="mt-3 font-serif text-4xl">Training a team or a class?</h2>
+            <p class="mt-4 text-sm leading-7 text-white/90">Group sessions for carpentry and upholstery teams, design students, showroom staff or community groups are quoted separately. Tell us about your group and we’ll put together a plan and a price.</p>
+            <ul class="mt-8 grid gap-3 text-sm">
+              <li class="flex gap-3"><Icon name="fa6-solid:users" class="mt-1 shrink-0" />Sessions shaped around your group’s level</li>
+              <li class="flex gap-3"><Icon name="fa6-solid:layer-group" class="mt-1 shrink-0" />Combine topics from any of the courses</li>
+              <li class="flex gap-3"><Icon name="fa6-solid:file-invoice" class="mt-1 shrink-0" />A clear written quote before anything is booked</li>
+            </ul>
+          </div>
+        </aside>
+        <form data-ajax-form="groupTraining" action={actions.groupTraining} method="post" class="grid gap-4 p-8 sm:grid-cols-2 sm:p-10">
+          <FormResult action={actions.groupTraining} class="sm:col-span-2" />
+          <label class="text-sm font-medium">Your name<input class="form-control mt-1" name="name" required maxlength="150" autocomplete="name" /></label>
+          <label class="text-sm font-medium">Organisation (optional)<input class="form-control mt-1" name="organisation" maxlength="150" autocomplete="organization" /></label>
+          <label class="text-sm font-medium">Email<input class="form-control mt-1" type="email" name="email" required autocomplete="email" /></label>
+          <label class="text-sm font-medium">Phone<input class="form-control mt-1" type="tel" name="phone" required autocomplete="tel" /></label>
+          <label class="text-sm font-medium">Group size<input class="form-control mt-1" type="number" name="group_size" min="2" max="500" required /></label>
+          <label class="text-sm font-medium">Course<select class="form-control mt-1" name="course"><option value="">Several, or not sure yet</option>{courses.map((course) => <option>{course.title}</option>)}</select></label>
+          <label class="text-sm font-medium sm:col-span-2">Preferred dates (optional)<input class="form-control mt-1" name="dates" maxlength="300" placeholder="e.g. Saturday mornings in February" /></label>
+          <label class="text-sm font-medium sm:col-span-2">Anything else we should know?<textarea class="form-control mt-1" name="message" rows="3" maxlength="5000"></textarea></label>
+          <button class="btn-primary w-fit shadow-md sm:col-span-2">Request a group quote <Icon name="fa6-solid:paper-plane" class="text-xs" /></button>
+        </form>
+      </div>
+    </div>
+  </section>
+
+  <!-- FAQ -->
+  <section class="py-20">
+    <div class="mx-auto max-w-3xl px-5"><p class="eyebrow text-center">Good to know</p><h2 class="mt-2 text-center font-serif text-3xl sm:text-4xl">Questions about the classes</h2>
+      <div class="mt-8 grid gap-3">{faqs.map(([question, answer]) => <details class="group rounded-2xl bg-white p-5 shadow-sm ring-1 ring-ink/5"><summary class="flex cursor-pointer list-none items-center justify-between gap-4 font-semibold">{question}<Icon name="fa6-solid:plus" class="shrink-0 text-sm text-sage transition group-open:rotate-45" /></summary><p class="mt-3 text-sm leading-7 text-gray-600">{answer}</p></details>)}</div>
+    </div>
+  </section>
+
+  <!-- Closing CTA -->
+  <section class="mx-auto max-w-7xl px-5 pb-20">
+    <div class="relative overflow-hidden rounded-3xl bg-forest px-8 py-14 text-center text-white sm:px-12">
+      <YuccaSprig class="pointer-events-none absolute -bottom-16 left-1/2 h-80 w-80 -translate-x-1/2 text-white/5" />
+      <p class="relative font-serif text-3xl leading-snug sm:text-4xl">Build your knowledge. Understand quality.<br class="hidden sm:block" /> Make confident decisions about your home.</p>
+      <div class="relative mt-8 flex flex-wrap justify-center gap-3"><a href="#book" class="rounded-full bg-wheat px-6 py-3 text-sm font-semibold text-night transition hover:bg-white">Book a session</a><a href="/contact?topic=Virtual%20classes" class="rounded-full border border-white/40 px-6 py-3 text-sm font-semibold transition hover:bg-white/10">Ask a question</a></div>
+      {maxRate > minRate && <p class="relative mt-6 text-xs text-white/75">{courses.length} courses · {formatMoneyWhole(minRate)}–{formatMoneyWhole(maxRate)} per hour</p>}
+    </div>
+  </section>
+</BaseLayout>
+
+<script>
+  // Course filter tabs without a reload (the links still work without JS).
+  const grid = document.querySelector<HTMLElement>('[data-course-grid]');
+  const tabs = [...document.querySelectorAll<HTMLAnchorElement>('[data-filter]')];
+  const applyFilter = (track: string) => {
+    grid?.querySelectorAll<HTMLElement>('[data-track]').forEach((card) => { card.hidden = Boolean(track) && card.dataset.track !== track; });
+    tabs.forEach((tab) => {
+      const active = tab.dataset.filter === track;
+      tab.classList.toggle('bg-forest', active); tab.classList.toggle('text-white', active);
+      tab.classList.toggle('bg-white', !active);
+      if (active) tab.setAttribute('aria-current', 'true'); else tab.removeAttribute('aria-current');
+    });
+  };
+  [...tabs, ...document.querySelectorAll<HTMLAnchorElement>('[data-track-link]')].forEach((link) => link.addEventListener('click', (event) => {
+    event.preventDefault();
+    applyFilter(link.dataset.filter ?? link.dataset.trackLink ?? '');
+    document.getElementById('courses')?.scrollIntoView({ behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
+  }));
+
+  // Live cost calculator.
+  const calc = document.querySelector<HTMLFormElement>('[data-calculator]');
+  if (calc) {
+    const rates = JSON.parse(calc.dataset.rates ?? '{}') as Record<string, number>;
+    const kes = (cents: number) => `KES ${Math.round(cents / 100).toLocaleString('en-KE')}`;
+    const update = () => {
+      const field = (name: string) => { const el = calc.querySelector(`select[name=${name}]`); return el instanceof HTMLSelectElement ? el.value : ''; };
+      const slug = field('calc');
+      const hours = Number(field('calc_hours')) || 1;
+      calc.querySelector('[data-calc-total]')!.textContent = kes((rates[slug] ?? 0) * hours);
+      calc.querySelector('[data-calc-breakdown]')!.textContent = `${hours} × ${kes(rates[slug] ?? 0)} per hour`;
+      calc.querySelector<HTMLAnchorElement>('[data-calc-book]')!.href = `/classes/${slug}?hours=${hours}#book`;
+    };
+    calc.addEventListener('change', update);
+    calc.addEventListener('submit', (event) => { event.preventDefault(); update(); });
+  }
+</script>

@@ -1,0 +1,153 @@
+---
+import { actions } from 'astro:actions';
+import { and, asc, count, desc, eq } from 'drizzle-orm';
+import Icon from '~/components/Icon.astro';
+import Price from '~/components/Price.astro';
+import ProductCard from '~/components/ProductCard.astro';
+import { PRODUCT_PLACEHOLDER_IMAGE } from '~/data/fabric-collection';
+import BaseLayout from '~/layouts/BaseLayout.astro';
+import { productBySlug, relatedProducts } from '~/lib/catalogue';
+import { db, schema } from '~/lib/db';
+import { formatMoney } from '~/lib/money';
+import { deliveryFeeCents } from '~/lib/pricing';
+import { absoluteUrl, breadcrumbJsonLd, BUSINESS_NAME, businessId, metaDescription, siteOrigin } from '~/lib/seo';
+
+const product = await productBySlug(Astro.params.slug ?? '');
+if (!product) return Astro.rewrite('/404');
+
+const user = Astro.locals.user;
+const [images, related, reviews, eligible, [reviewTotal]] = await Promise.all([
+  db.select().from(schema.productImages).where(eq(schema.productImages.productId, product.id)).orderBy(asc(schema.productImages.sortOrder), asc(schema.productImages.id)),
+  relatedProducts(product.categoryId, product.id),
+  db.select({ rating: schema.productReviews.rating, title: schema.productReviews.title, review: schema.productReviews.review, createdAt: schema.productReviews.createdAt, name: schema.user.name })
+    .from(schema.productReviews).innerJoin(schema.user, eq(schema.user.id, schema.productReviews.userId))
+    .where(and(eq(schema.productReviews.productId, product.id), eq(schema.productReviews.status, 'approved')))
+    .orderBy(desc(schema.productReviews.createdAt)).limit(10),
+  user?.role === 'customer'
+    ? db.select({ id: schema.orders.id }).from(schema.orders).innerJoin(schema.orderItems, eq(schema.orderItems.orderId, schema.orders.id))
+      .where(and(eq(schema.orders.userId, user.id), eq(schema.orderItems.productId, product.id), eq(schema.orders.status, 'delivered'))).limit(1)
+    : Promise.resolve([]),
+  db.select({ n: count() }).from(schema.productReviews)
+    .where(and(eq(schema.productReviews.productId, product.id), eq(schema.productReviews.status, 'approved'))),
+]);
+const reviewCount = reviewTotal?.n ?? 0;
+const canReview = eligible.length > 0;
+const mainImage = product.image ?? PRODUCT_PLACEHOLDER_IMAGE;
+const priceCents = product.salePriceCents ?? product.priceCents;
+const origin = siteOrigin(Astro.url);
+const url = absoluteUrl(`/products/${product.slug}`, origin);
+const deliveryFee = deliveryFeeCents();
+// Ratings come only from approved reviews of this product, never from the business itself.
+const rating = reviewCount > 0 && product.averageRating !== null
+  ? { '@type': 'AggregateRating', ratingValue: Number(product.averageRating).toFixed(1), reviewCount, bestRating: 5, worstRating: 1 }
+  : undefined;
+const structuredData = [{
+  '@context': 'https://schema.org', '@type': 'Product', name: product.name, description: product.description, sku: product.sku,
+  image: [absoluteUrl(mainImage, origin), ...images.map((image) => absoluteUrl(image.image, origin))],
+  brand: { '@type': 'Brand', name: BUSINESS_NAME }, category: product.categoryName ?? undefined,
+  material: product.material ?? undefined, color: product.colour ?? undefined,
+  aggregateRating: rating,
+  review: reviews.length === 0 ? undefined : reviews.slice(0, 5).map((review) => ({
+    '@type': 'Review', reviewRating: { '@type': 'Rating', ratingValue: review.rating, bestRating: 5 },
+    author: { '@type': 'Person', name: review.name }, datePublished: review.createdAt.toISOString().slice(0, 10),
+    name: review.title ?? undefined, reviewBody: review.review,
+  })),
+  offers: {
+    '@type': 'Offer', priceCurrency: 'KES', price: (priceCents / 100).toFixed(2), url, itemCondition: 'https://schema.org/NewCondition',
+    availability: product.stock > 0 ? 'https://schema.org/InStock' : 'https://schema.org/OutOfStock',
+    seller: { '@id': businessId(origin) }, areaServed: { '@type': 'Country', name: 'Kenya' },
+  },
+}, breadcrumbJsonLd(origin, [['Shop', '/shop'], [product.name, `/products/${product.slug}`]])];
+const pageTitle = `${product.name} Upholstery Fabric, Nairobi | ${BUSINESS_NAME}`;
+const pageDescription = metaDescription(`${formatMoney(priceCents)} per ${product.unit}. ${product.description} Delivered in Nairobi and across Kenya.`);
+const monthYear = new Intl.DateTimeFormat('en-GB', { month: 'short', year: 'numeric', timeZone: 'Africa/Nairobi' });
+const consultationHref = `/consultations?type=${encodeURIComponent('Fabric and colour selection')}#book`;
+---
+<BaseLayout title={pageTitle} description={pageDescription} image={mainImage} imageAlt={`${product.name} upholstery fabric`} type="product" structuredData={structuredData}>
+  <div class="mx-auto max-w-7xl px-5 py-10">
+    <nav aria-label="Breadcrumb"><ol class="flex flex-wrap items-center gap-2 text-xs text-gray-600">
+      <li><a class="hover:text-forest" href="/">Home</a></li><li aria-hidden="true"><Icon name="fa6-solid:chevron-right" class="text-[9px]" /></li>
+      <li><a class="hover:text-forest" href="/shop">Shop</a></li><li aria-hidden="true"><Icon name="fa6-solid:chevron-right" class="text-[9px]" /></li>
+      {product.categoryId && <><li><a class="hover:text-forest" href={`/shop?category=${product.categoryId}`}>{product.categoryName ?? 'Collection'}</a></li><li aria-hidden="true"><Icon name="fa6-solid:chevron-right" class="text-[9px]" /></li></>}
+      <li class="font-medium text-ink" aria-current="page">{product.name}</li>
+    </ol></nav>
+
+    <section class="mt-7 grid gap-10 md:grid-cols-2">
+      <div>
+        <img id="product-image" class="aspect-[4/5] w-full rounded-3xl bg-white object-cover object-top shadow-lg" src={mainImage} alt={`${product.name}${product.colour ? `, ${product.colour.toLowerCase()}` : ''} fabric`} width="736" height="920" fetchpriority="high" />
+        {images.length > 0 && (
+          <div class="mt-3 flex flex-wrap gap-3">
+            {[{ image: mainImage, altText: product.name }, ...images].map((image) => (
+              <button type="button" class="h-20 w-20 overflow-hidden rounded-xl border border-ink/10 transition hover:border-forest" data-image={image.image} aria-label={`Show ${image.altText || product.name}`}><img src={image.image} alt="" class="h-full w-full object-cover" loading="lazy" /></button>
+            ))}
+          </div>
+        )}
+      </div>
+      <div class="py-3 md:py-10">
+        <p class="eyebrow">{product.categoryName ?? 'Yucca collection'}</p>
+        <h1 class="mt-3 font-serif text-4xl sm:text-5xl">{product.name}</h1>
+        <p class="mt-4 text-2xl font-semibold text-forest"><Price priceCents={product.priceCents} salePriceCents={product.salePriceCents} unit={product.unit} /></p>
+        <p class="mt-2 text-xs text-gray-500">SKU {product.sku}</p>
+        <p class="mt-5 whitespace-pre-line text-sm leading-7 text-gray-600">{product.description}</p>
+        <dl class="mt-6 grid grid-cols-2 gap-y-3 border-y border-ink/10 py-5 text-sm">
+          <dt class="text-gray-500">Colour</dt><dd>{product.colour || 'Ask us'}</dd>
+          <dt class="text-gray-500">Material</dt><dd>{product.material || 'See description'}</dd>
+          <dt class="text-gray-500">Availability</dt><dd>{product.stock > 0 ? `In stock · ${product.stock} ${product.unit}${product.stock === 1 ? '' : 's'}` : 'Currently unavailable'}</dd>
+        </dl>
+        {product.stock > 0 && (
+          <form method="post" action={actions.cartAdd} data-ajax-form="cartAdd" data-keep class="mt-7 flex flex-wrap items-center gap-3">
+            <input type="hidden" name="product_id" value={product.id} />
+            <label class="text-sm" for="quantity">Quantity ({product.unit}s)</label>
+            <input id="quantity" name="quantity" type="number" min="1" max={product.stock} value="1" required class="form-control w-24" />
+            <button class="rounded-full bg-forest px-7 py-3 text-sm font-semibold text-white transition hover:bg-olive">Add to bag</button>
+          </form>
+        )}
+        <ul class="mt-8 grid gap-3 rounded-3xl bg-white p-5 text-sm shadow-sm ring-1 ring-ink/5">
+          <li class="flex gap-3"><Icon name="fa6-solid:truck-fast" class="mt-1 w-5 shrink-0 text-sage" /><span><strong>Delivery {formatMoney(deliveryFee)}</strong><span class="block text-xs text-gray-600">Confirmed with you after you order.</span></span></li>
+          <li class="flex gap-3"><Icon name="fa6-solid:mobile-screen-button" class="mt-1 w-5 shrink-0 text-sage" /><span><strong>Pay your way</strong><span class="block text-xs text-gray-600">M-Pesa, bank transfer or cash on delivery.</span></span></li>
+          <li class="flex gap-3"><Icon name="fa6-solid:couch" class="mt-1 w-5 shrink-0 text-sage" /><span><strong>Want it upholstered?</strong><span class="block text-xs text-gray-600"><a class="font-semibold text-forest underline" href="/services#request-form">Request a quote</a> and we’ll do the work for you.</span></span></li>
+          <li class="flex gap-3"><Icon name="fa6-solid:swatchbook" class="mt-1 w-5 shrink-0 text-sage" /><span><strong>Not sure yet?</strong><span class="block text-xs text-gray-600"><a class="font-semibold text-forest underline" href={consultationHref}>Book a fabric consultation</a> to compare samples, or <a class="font-semibold text-forest underline" href="/classes/upholstery-fabric-education">learn about fabrics in a virtual class</a>.</span></span></li>
+        </ul>
+      </div>
+    </section>
+
+    <section class="mt-12 border-t border-ink/10 py-12">
+      <h2 class="font-serif text-3xl">Customer reviews</h2>
+      {reviews.length > 0 ? (
+        <div class="mt-6 grid gap-4 md:grid-cols-2">
+          {reviews.map((review) => (
+            <article class="rounded-3xl bg-white p-6 shadow-sm ring-1 ring-ink/5">
+              <p class="text-clay"><span aria-hidden="true">{'★'.repeat(review.rating)}<span class="text-gray-300">{'★'.repeat(5 - review.rating)}</span></span><span class="sr-only">{review.rating} out of 5 stars</span></p>
+              {review.title && <h3 class="mt-2 font-semibold">{review.title}</h3>}
+              <p class="mt-2 text-sm leading-6 text-gray-600">{review.review}</p>
+              <p class="mt-3 text-xs text-gray-500">{review.name} · {monthYear.format(review.createdAt)}</p>
+            </article>
+          ))}
+        </div>
+      ) : (
+        <p class="mt-4 flex items-center gap-3 rounded-2xl bg-white p-5 text-sm text-gray-600 ring-1 ring-ink/5"><Icon name="fa6-regular:comment-dots" class="text-lg text-sage" />No reviews yet. Customers can review a fabric after their order is delivered.</p>
+      )}
+      {canReview ? (
+        <form method="post" action={actions.review} data-ajax-form="review" class="mt-8 grid max-w-xl gap-4 rounded-3xl bg-white p-6 ring-1 ring-ink/5">
+          <input type="hidden" name="product_id" value={product.id} />
+          <h3 class="font-serif text-xl">Share your experience</h3>
+          <label class="text-sm">Rating<select class="form-control mt-1" name="rating" required><option value="5">5 — Loved it</option><option value="4">4 — Very good</option><option value="3">3 — Good</option><option value="2">2 — Not for me</option><option value="1">1 — Disappointed</option></select></label>
+          <label class="text-sm">Title (optional)<input class="form-control mt-1" name="title" maxlength="150" /></label>
+          <label class="text-sm">Your review<textarea class="form-control mt-1" name="review" minlength="10" maxlength="2000" rows="4" required></textarea></label>
+          <button class="btn-primary w-fit">Submit for review</button>
+        </form>
+      ) : user?.role === 'customer' && <p class="mt-6 text-xs text-gray-500">Verified product reviews are available after a delivered order.</p>}
+    </section>
+
+    {related.length > 0 && (
+      <section class="py-16"><h2 class="font-serif text-3xl">You might also like</h2><div class="mt-7 grid grid-cols-2 gap-3 sm:gap-5 lg:grid-cols-4">{related.map((item) => <ProductCard product={item} />)}</div></section>
+    )}
+  </div>
+</BaseLayout>
+
+<script>
+  const main = document.getElementById('product-image') as HTMLImageElement | null;
+  document.querySelectorAll<HTMLButtonElement>('[data-image]').forEach((button) => button.addEventListener('click', () => {
+    if (main && button.dataset.image) main.src = button.dataset.image;
+  }));
+</script>

@@ -1,0 +1,23 @@
+---
+import { and, desc, eq, sql } from 'drizzle-orm';
+import Icon from '~/components/Icon.astro';
+import ProductCard from '~/components/ProductCard.astro';
+import AccountLayout from '~/layouts/AccountLayout.astro';
+import { db, schema } from '~/lib/db';
+
+const p = schema.products;
+const products = await db.select({
+  id: p.id, slug: p.slug, name: p.name, image: p.image, priceCents: p.priceCents, salePriceCents: p.salePriceCents,
+  stock: p.stock, unit: p.unit, colour: p.colour, material: p.material, categoryName: sql<string | null>`null`,
+  averageRating: sql<number | null>`(select avg(r.rating) from product_reviews r where r.product_id = ${p.id} and r.status = 'approved')`,
+}).from(schema.wishlistItems).innerJoin(p, eq(p.id, schema.wishlistItems.productId))
+  .where(and(eq(schema.wishlistItems.userId, Astro.locals.user!.id), eq(p.isActive, true)))
+  .orderBy(desc(schema.wishlistItems.createdAt));
+---
+<AccountLayout active="wishlist" heading="Saved favourites" intro="Fabrics you’ve saved to compare and come back to.">
+  {products.length > 0 ? (
+    <div class="grid grid-cols-2 gap-3 sm:gap-5 xl:grid-cols-3">{products.map((product) => <ProductCard product={product} removable />)}</div>
+  ) : (
+    <div class="rounded-3xl bg-white px-6 py-16 text-center shadow-sm ring-1 ring-ink/5"><Icon name="fa6-regular:heart" class="text-3xl text-sage" /><h2 class="mt-4 font-serif text-2xl">Nothing saved yet</h2><p class="mt-2 text-sm text-gray-600">Tap the heart on any fabric to keep it here.</p><a class="btn-primary mt-6" href="/shop">Browse fabrics</a></div>
+  )}
+</AccountLayout>

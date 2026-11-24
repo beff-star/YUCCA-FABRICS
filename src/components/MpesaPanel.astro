@@ -1,0 +1,97 @@
+---
+// M-Pesa payment panel for an order (YF…) or class booking (YT…): sends the STK prompt, then polls until
+// the payment is confirmed. Works without JS too (the forms post and the page shows the result).
+import { actions } from 'astro:actions';
+import FormResult from './FormResult.astro';
+import Icon from './Icon.astro';
+import { formatMoney } from '~/lib/money';
+import { mpesaConfigured } from '~/lib/mpesa';
+
+interface Props { reference: string; amountCents: number; phone: string; status: string }
+const { reference, amountCents, phone, status } = Astro.props;
+const configured = mpesaConfigured();
+---
+<div class="rounded-3xl bg-white p-6 shadow-sm ring-1 ring-ink/5 sm:p-8" data-mpesa-panel data-reference={reference} data-status={status}>
+  <div class="flex items-center gap-4">
+    <span class="grid h-12 w-12 shrink-0 place-items-center rounded-2xl bg-[#DFF0E7] text-xl text-[#17442F]"><Icon name="fa6-solid:mobile-screen-button" /></span>
+    <div><h2 class="font-serif text-2xl">Pay {formatMoney(amountCents)} with M-Pesa</h2><p class="text-sm text-gray-600">We’ll send a prompt to your phone. Enter your M-Pesa PIN to approve it.</p></div>
+  </div>
+  <FormResult action={actions.mpesaPay} class="mt-5" />
+  <FormResult action={actions.paymentCheck} class="mt-5" />
+  {configured ? (
+    <>
+      <form method="post" action={actions.mpesaPay} class="mt-6 flex flex-col gap-3 sm:flex-row sm:items-end" data-mpesa-form>
+        <input type="hidden" name="reference" value={reference} />
+        <label class="flex-1 text-sm font-medium">M-Pesa phone number<input class="form-control mt-1" type="tel" name="phone" required autocomplete="tel" value={phone} placeholder="0712 345 678" /></label>
+        <button class="btn-primary shrink-0"><Icon name="fa6-solid:paper-plane" class="text-xs" />Send payment prompt</button>
+      </form>
+      <div class="mt-5 hidden items-center gap-3 rounded-2xl bg-cream p-4 text-sm" data-mpesa-waiting role="status" aria-live="polite">
+        <span class="h-4 w-4 shrink-0 animate-spin rounded-full border-2 border-forest border-t-transparent motion-reduce:animate-none" aria-hidden="true"></span>
+        <span data-mpesa-message>Waiting for you to approve the payment on your phone…</span>
+      </div>
+      <form method="post" action={actions.paymentCheck} class="mt-4" data-mpesa-check>
+        <input type="hidden" name="reference" value={reference} />
+        <button class="text-sm font-semibold text-forest underline">I’ve paid: check now</button>
+      </form>
+    </>
+  ) : (
+    <p class="mt-5 rounded-2xl bg-[#FBF0D9] p-4 text-sm text-[#6B4A07]">Online M-Pesa payments aren’t switched on yet. Please contact us and we’ll help you pay.</p>
+  )}
+</div>
+
+<script>
+  import { actions } from 'astro:actions';
+  import { actionErrorMessage, notify } from '~/scripts/ui';
+
+  document.querySelectorAll<HTMLElement>('[data-mpesa-panel]').forEach((panel) => {
+    const reference = panel.dataset.reference!;
+    const form = panel.querySelector<HTMLFormElement>('[data-mpesa-form]');
+    const check = panel.querySelector<HTMLFormElement>('[data-mpesa-check]');
+    const waiting = panel.querySelector<HTMLElement>('[data-mpesa-waiting]');
+    const message = panel.querySelector<HTMLElement>('[data-mpesa-message]');
+    let timer: ReturnType<typeof setInterval> | undefined;
+
+    const finish = (status: string) => {
+      if (timer) clearInterval(timer);
+      if (status === 'paid') { window.location.reload(); return; }
+      waiting?.classList.add('hidden');
+      if (status === 'failed') notify('The payment didn’t go through. You can try again.', true);
+    };
+    const poll = () => {
+      let tries = 0;
+      waiting?.classList.replace('hidden', 'flex');
+      if (timer) clearInterval(timer);
+      timer = setInterval(async () => {
+        tries += 1;
+        try {
+          const response = await fetch(`/api/payments/${reference}`, { headers: { Accept: 'application/json' } });
+          const { paymentStatus } = await response.json() as { paymentStatus?: string };
+          if (paymentStatus === 'paid' || paymentStatus === 'failed') finish(paymentStatus);
+        } catch { /* a missed poll is retried on the next tick */ }
+        // After ~2 minutes stop polling and let the customer check manually.
+        if (tries >= 40) {
+          if (timer) clearInterval(timer);
+          if (message) message.textContent = 'Still waiting. If you approved the payment, tap “I’ve paid: check now”.';
+        }
+      }, 3000);
+    };
+
+    form?.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const button = form.querySelector('button');
+      if (button) button.disabled = true;
+      const { data, error } = await actions.mpesaPay(new FormData(form));
+      if (button) button.disabled = false;
+      if (error) { notify(actionErrorMessage(error), true); return; }
+      notify(data.message);
+      if (data.paymentStatus === 'paid') finish('paid'); else poll();
+    });
+    check?.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const { data, error } = await actions.paymentCheck(new FormData(check));
+      if (error) { notify(actionErrorMessage(error), true); return; }
+      notify(data.message, data.paymentStatus === 'failed');
+      if (data.paymentStatus === 'paid') finish('paid');
+    });
+  });
+</script>

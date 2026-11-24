@@ -1,0 +1,102 @@
+---
+import { actions } from 'astro:actions';
+import CheckoutSteps from '~/components/CheckoutSteps.astro';
+import FormAlert from '~/components/FormAlert.astro';
+import FormResult from '~/components/FormResult.astro';
+import Icon from '~/components/Icon.astro';
+import ProductCard from '~/components/ProductCard.astro';
+import { PRODUCT_PLACEHOLDER_IMAGE } from '~/data/fabric-collection';
+import BaseLayout from '~/layouts/BaseLayout.astro';
+import { CartError, findCartId, setQuantity } from '~/lib/cart';
+import { featuredProducts } from '~/lib/catalogue';
+import { priceCart } from '~/lib/checkout';
+import { setFlash } from '~/lib/flash';
+import { formatMoney } from '~/lib/money';
+import { taxRate } from '~/lib/pricing';
+import { getSettings, whatsappUrl } from '~/lib/settings';
+
+// The bag form posts here (works without JS); with JS, quantity changes submit automatically.
+if (Astro.request.method === 'POST') {
+  const form = await Astro.request.formData();
+  try {
+    const remove = Number(form.get('remove'));
+    if (remove > 0) {
+      await setQuantity(Astro, remove, 0);
+    } else {
+      for (const [key, value] of form.entries()) {
+        const match = /^quantities\[(\d+)\]$/.exec(key);
+        if (match) await setQuantity(Astro, Number(match[1]), Math.max(0, Math.floor(Number(value)) || 0));
+      }
+    }
+  } catch (error) {
+    if (!(error instanceof CartError)) throw error;
+    setFlash(Astro.cookies, 'error', error.message);
+  }
+  return Astro.redirect('/cart', 303);
+}
+
+const cartId = await findCartId(Astro);
+const { lines, code, coupon, totals } = await priceCart(cartId, Astro.locals.user?.id ?? null);
+const itemCount = lines.reduce((n, line) => n + line.quantity, 0);
+const suggestions = lines.length ? [] : (await featuredProducts(8)).filter((p) => p.stock > 0).slice(0, 4);
+const settings = await getSettings(Astro.locals);
+---
+<BaseLayout title="Your shopping bag | Yucca Homeware" noindex>
+  <section class="bg-cream"><div class="mx-auto max-w-7xl px-5 py-10"><p class="eyebrow">The things you love</p><h1 class="mt-2 font-serif text-3xl sm:text-4xl">Your shopping bag</h1><CheckoutSteps current={1} /></div></section>
+  <section class="mx-auto max-w-7xl px-5 py-10">
+    {lines.length === 0 ? (
+      <>
+        <div class="rounded-3xl bg-white px-6 py-14 text-center shadow-sm ring-1 ring-ink/5"><span class="mx-auto grid h-16 w-16 place-items-center rounded-full bg-cream text-2xl text-forest"><Icon name="fa6-solid:bag-shopping" /></span><h2 class="mt-5 font-serif text-2xl">Your bag is waiting for something lovely</h2><p class="mt-2 text-sm text-gray-600">Explore the collection and find a fabric that feels like you.</p><a class="btn-primary mt-6" href="/shop">Browse fabrics</a></div>
+        {suggestions.length > 0 && <><h2 class="mt-14 font-serif text-2xl sm:text-3xl">You might like</h2><div class="mt-6 grid grid-cols-2 gap-3 sm:gap-5 lg:grid-cols-4">{suggestions.map((product) => <ProductCard product={product} />)}</div></>}
+      </>
+    ) : (
+      <div class="grid gap-8 lg:grid-cols-[1fr_380px]">
+        <div class="rounded-3xl bg-white p-5 shadow-sm ring-1 ring-ink/5 sm:p-8">
+          <form method="post" data-auto-submit>
+            <ul class="divide-y divide-ink/10">
+              {lines.map((item) => (
+                <li class="grid grid-cols-[88px_1fr] gap-4 py-5 first:pt-0 sm:grid-cols-[112px_1fr_auto]">
+                  <a href={`/products/${item.slug}`} class="block overflow-hidden rounded-2xl bg-cream" tabindex="-1" aria-hidden="true"><img class="aspect-square w-full object-cover object-top" src={item.image ?? PRODUCT_PLACEHOLDER_IMAGE} alt="" /></a>
+                  <div class="min-w-0">
+                    <a class="font-serif text-lg hover:text-forest" href={`/products/${item.slug}`}>{item.name}</a>
+                    <p class="mt-1 text-xs text-gray-500">{formatMoney(item.unitPriceCents)} / {item.unit} · {item.stock} available</p>
+                    <div class="mt-3 flex flex-wrap items-center gap-3">
+                      <label class="inline-flex items-center gap-2 text-xs font-medium">Qty ({item.unit}s)<input class="form-control w-20 py-2 text-center" type="number" min="1" max={item.stock} name={`quantities[${item.productId}]`} value={item.quantity} /></label>
+                      <button class="inline-flex items-center gap-1.5 rounded-full px-3 py-2 text-xs font-semibold text-gray-600 transition hover:bg-cream hover:text-clay" name="remove" value={item.productId}><Icon name="fa6-regular:trash-can" />Remove<span class="sr-only"> {item.name}</span></button>
+                    </div>
+                  </div>
+                  <p class="col-start-2 text-sm font-semibold sm:col-start-3 sm:text-right sm:text-base">{formatMoney(item.lineTotalCents)}</p>
+                </li>
+              ))}
+            </ul>
+            <div class="mt-6 flex flex-wrap items-center justify-between gap-3 border-t border-ink/10 pt-5"><a href="/shop" class="inline-flex items-center gap-2 text-sm font-semibold text-forest"><Icon name="fa6-solid:arrow-left" class="text-xs" />Continue shopping</a><button class="rounded-full border border-forest/30 px-5 py-2.5 text-sm font-semibold text-forest transition hover:bg-cream" data-update-button>Update bag</button></div>
+          </form>
+        </div>
+        <aside class="h-fit rounded-3xl bg-white p-6 shadow-sm ring-1 ring-ink/5 lg:sticky lg:top-28">
+          <h2 class="font-serif text-2xl">Summary</h2>
+          <FormResult action={actions.coupon} class="mt-4" />
+          <form data-ajax-form="coupon" action={actions.coupon} method="post" class="mt-5 flex gap-2"><input type="hidden" name="intent" value="apply" /><label class="sr-only" for="coupon-code">Coupon code</label><input id="coupon-code" class="form-control min-w-0 uppercase" name="code" placeholder="Coupon code" value={code ?? ''} /><button class="shrink-0 rounded-full border border-forest px-4 text-sm font-semibold text-forest transition hover:bg-forest hover:text-white">Apply</button></form>
+          {code && (
+            <div class="mt-3 flex items-center justify-between gap-3 rounded-2xl bg-cream px-4 py-2.5 text-xs">
+              {coupon?.ok ? <span><Icon name="fa6-solid:tag" class="mr-1.5 inline text-sage" />{code} · −{formatMoney(coupon.discountCents)}</span> : <span class="text-[#7A2E22]">{coupon?.ok === false ? coupon.reason : 'This coupon is no longer available.'}</span>}
+              <form data-ajax-form="coupon" action={actions.coupon} method="post"><input type="hidden" name="intent" value="remove" /><button class="font-semibold underline">Remove</button></form>
+            </div>
+          )}
+          <dl class="mt-6 grid gap-3 text-sm">
+            <div class="flex justify-between"><dt class="text-gray-600">Subtotal ({itemCount} {itemCount === 1 ? 'item' : 'items'})</dt><dd>{formatMoney(totals.subtotalCents)}</dd></div>
+            {totals.discountCents > 0 && <div class="flex justify-between"><dt class="text-gray-600">Coupon</dt><dd>−{formatMoney(totals.discountCents)}</dd></div>}
+            <div class="flex justify-between"><dt class="text-gray-600">Delivery</dt><dd>{formatMoney(totals.deliveryFeeCents)}</dd></div>
+          </dl>
+          <p class="mt-3 text-xs leading-5 text-gray-500">VAT ({Math.round(taxRate() * 100)}%) is added at checkout. Fabric is sold by the metre.</p>
+          {code && !coupon?.ok && <FormAlert message="Remove the coupon above to continue to checkout." class="mt-4" />}
+          <a href="/checkout" class="btn-primary mt-6 w-full py-3.5 shadow-md">Continue to checkout <Icon name="fa6-solid:arrow-right" class="text-xs" /></a>
+          <ul class="mt-6 grid gap-3 border-t border-ink/10 pt-5 text-xs text-gray-600">
+            <li class="flex items-center gap-3"><Icon name="fa6-solid:mobile-screen-button" class="w-4 text-sage" />Pay by M-Pesa, bank transfer or cash on delivery</li>
+            <li class="flex items-center gap-3"><Icon name="fa6-solid:truck-fast" class="w-4 text-sage" />Delivery {formatMoney(totals.deliveryFeeCents)}, confirmed with your order</li>
+            <li class="flex items-center gap-3"><Icon name="fa6-solid:headset" class="w-4 text-sage" />Questions? <a class="font-semibold text-forest underline" href={whatsappUrl(settings)} target="_blank" rel="noopener">WhatsApp us</a></li>
+          </ul>
+        </aside>
+      </div>
+    )}
+  </section>
+</BaseLayout>

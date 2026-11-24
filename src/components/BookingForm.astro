@@ -1,0 +1,119 @@
+---
+// Class booking form. Without JS: every open time is listed by date, and "Update times" reloads for a new
+// session length. With JS (src/scripts/booking.ts): date chips filter the times, the total updates live, and
+// times are re-fetched when the length changes.
+import { actions } from 'astro:actions';
+import FormResult from './FormResult.astro';
+import Icon from './Icon.astro';
+import { BOOKING_GUIDELINES, PLATFORM_DETAILS, PLATFORM_LABELS, SKILL_LEVELS, TRAINING_RULES } from '~/data/courses';
+import { bookableDates } from '~/lib/availability';
+import { formatClock, formatIsoDate } from '~/lib/format';
+import { formatMoneyWhole } from '~/lib/money';
+import { slotRules, type Course } from '~/lib/training';
+
+interface Props { courses: Course[]; selected?: Course }
+const { courses, selected } = Astro.props;
+const params = Astro.url.searchParams;
+const requestedHours = Number.parseInt(params.get('hours') ?? '1', 10);
+const hours = requestedHours >= 1 && requestedHours <= TRAINING_RULES.maxHours ? requestedHours : 1;
+const chosen = selected ?? courses.find((course) => course.slug === params.get('course')) ?? courses[0]!;
+const dates = bookableDates(hours, await slotRules());
+const user = Astro.locals.user;
+const result = Astro.getActionResult(actions.trainingBook);
+const chip = 'relative cursor-pointer rounded-2xl border border-ink/15 bg-white px-4 py-3 text-sm transition hover:border-forest/50 has-[:checked]:border-forest has-[:checked]:bg-forest has-[:checked]:text-white has-[:focus-visible]:outline has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-offset-2 has-[:focus-visible]:outline-olive';
+const step = 'flex items-center gap-3 font-serif text-xl';
+const num = 'grid h-8 w-8 shrink-0 place-items-center rounded-full bg-forest font-sans text-sm text-white';
+---
+<form id="book-form" method="post" action={actions.trainingBook} class="grid gap-8 lg:grid-cols-[1fr_340px]" data-booking-form data-rates={JSON.stringify(Object.fromEntries(courses.map((c) => [c.slug, c.hourlyRateCents])))}>
+  <div class="grid min-w-0 content-start gap-6">
+    {result?.error && <FormResult action={actions.trainingBook} />}
+    <fieldset class="grid gap-4 rounded-3xl bg-white p-6 shadow-sm ring-1 ring-ink/5 sm:p-8">
+      <legend class="contents"><span class={step}><span class={num}>1</span>Course and length</span></legend>
+      {selected ? (
+        <input type="hidden" name="course_slug" value={selected.slug} />
+      ) : (
+        <label class="text-sm font-medium">Course<select class="form-control mt-1" name="course_slug" data-course>{courses.map((course) => <option value={course.slug} selected={course.slug === chosen.slug}>{course.title} · {formatMoneyWhole(course.hourlyRateCents)}/hr</option>)}</select></label>
+      )}
+      <div>
+        <p class="text-sm font-medium" id="hours-label">Session length</p>
+        <div class="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-4" role="radiogroup" aria-labelledby="hours-label">
+          {Array.from({ length: TRAINING_RULES.maxHours }, (_, i) => i + 1).map((n) => (
+            <label class={chip}><input class="sr-only" type="radio" name="hours" value={n} checked={n === hours} data-hours /><span class="block font-semibold">{n} {n === 1 ? 'hour' : 'hours'}</span><span class="block text-xs opacity-80" data-hours-price={n}>{formatMoneyWhole(chosen.hourlyRateCents * n)}</span></label>
+          ))}
+        </div>
+        <noscript><p class="mt-3 text-sm">Show open times for: {Array.from({ length: TRAINING_RULES.maxHours }, (_, i) => i + 1).map((n) => <a class="ml-2 font-semibold text-forest underline" href={`?hours=${n}#book`}>{n} h</a>)}</p></noscript>
+        <p class="mt-2 text-xs text-gray-500">Minimum booking 1 hour; additional time is charged at the same hourly rate.</p>
+      </div>
+    </fieldset>
+
+    <fieldset class="grid gap-4 rounded-3xl bg-white p-6 shadow-sm ring-1 ring-ink/5 sm:p-8">
+      <legend class="contents"><span class={step}><span class={num}>2</span>Date and start time</span></legend>
+      <p class="-mt-1 text-xs text-gray-500">Times are Nairobi time (EAT). <span data-local-zone></span></p>
+      <div class="min-w-0" data-slots data-chip-class={`${chip} text-center`}>
+        {dates.length === 0 ? (
+          <p class="rounded-2xl bg-cream p-4 text-sm text-gray-600">No times are open for this length right now. Try a shorter session, or <a class="font-semibold text-forest underline" href="/contact?topic=Virtual%20class">contact us</a> to arrange one.</p>
+        ) : (
+          <>
+            <div class="-mx-1 flex gap-2 overflow-x-auto px-1 pb-2" data-date-chips hidden>
+              {dates.map(({ date }, index) => <button type="button" class:list={['shrink-0 rounded-2xl border px-4 py-2 text-center text-sm transition', index === 0 ? 'border-forest bg-forest text-white' : 'border-ink/15 bg-white hover:border-forest/50']} data-date-chip={date} aria-pressed={index === 0 ? 'true' : 'false'}><span class="block text-[11px] uppercase tracking-wider opacity-80">{new Date(`${date}T12:00:00+03:00`).toLocaleDateString('en-GB', { weekday: 'short', timeZone: 'Africa/Nairobi' })}</span><span class="block font-semibold">{formatIsoDate(date).replace(/ \d{4}$/, '')}</span></button>)}
+            </div>
+            <div class="grid max-h-[28rem] gap-5 overflow-y-auto pr-1" data-time-groups>
+              {dates.map(({ date, starts }) => (
+                <div role="radiogroup" aria-label={`Start times on ${formatIsoDate(date)}`} data-time-group={date}>
+                  <p class="mb-2 text-sm font-semibold" data-group-title>{formatIsoDate(date)}</p>
+                  <div class="grid grid-cols-3 gap-2 sm:grid-cols-4 md:grid-cols-5">
+                    {starts.map((time) => <label class:list={[chip, 'text-center']}><input class="sr-only" type="radio" name="slot" value={`${date}T${time}`} required /><span class="font-semibold">{formatClock(time)}</span></label>)}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </>
+        )}
+      </div>
+    </fieldset>
+
+    <fieldset class="grid gap-3 rounded-3xl bg-white p-6 shadow-sm ring-1 ring-ink/5 sm:p-8">
+      <legend class="contents"><span class={step}><span class={num}>3</span>How you’d like to meet</span></legend>
+      <div class="grid gap-3 md:grid-cols-3">
+        {(Object.keys(PLATFORM_LABELS) as (keyof typeof PLATFORM_LABELS)[]).map((key) => (
+          <label class="flex cursor-pointer flex-col gap-2 rounded-2xl border border-ink/15 p-4 transition hover:border-forest/50 has-[:checked]:border-forest has-[:checked]:bg-cream has-[:checked]:ring-1 has-[:checked]:ring-forest">
+            <span class="flex items-center gap-3"><input type="radio" name="platform" value={key} checked={key === 'google_meet'} required class="h-4 w-4 accent-forest" data-platform /><Icon name={PLATFORM_DETAILS[key].icon} class="text-lg text-forest" /><strong class="text-sm">{PLATFORM_LABELS[key]}</strong></span>
+            <span class="text-xs leading-5 text-gray-600">{PLATFORM_DETAILS[key].note}</span>
+          </label>
+        ))}
+      </div>
+    </fieldset>
+
+    <fieldset class="grid gap-4 rounded-3xl bg-white p-6 shadow-sm ring-1 ring-ink/5 sm:grid-cols-2 sm:p-8">
+      <legend class="contents"><span class:list={[step, 'sm:col-span-2']}><span class={num}>4</span>About you</span></legend>
+      <label class="text-sm font-medium sm:col-span-2">Full name<input class="form-control mt-1" name="name" required maxlength="150" autocomplete="name" value={user?.name ?? ''} /></label>
+      <label class="text-sm font-medium">Email<input class="form-control mt-1" type="email" name="email" required autocomplete="email" value={user?.email ?? ''} /></label>
+      <label class="text-sm font-medium">Phone (M-Pesa / WhatsApp)<input class="form-control mt-1" type="tel" name="phone" required autocomplete="tel" value={user?.phone ?? ''} placeholder="0712 345 678" /></label>
+      <label class="text-sm font-medium sm:col-span-2">Your experience<select class="form-control mt-1" name="skill_level" required><option value="">Choose one</option>{SKILL_LEVELS.map((level) => <option>{level}</option>)}</select></label>
+      <label class="text-sm font-medium sm:col-span-2">What would you like to get out of the session?<textarea class="form-control mt-1" name="goals" rows="4" minlength="10" maxlength="5000" required placeholder="For example: I’m choosing a sofa for a small living room and want to understand frames and fabrics."></textarea></label>
+      {!user && <p class="text-xs text-gray-500 sm:col-span-2"><a class="font-semibold text-forest underline" href={`/auth/login?next=${encodeURIComponent(Astro.url.pathname + '#book')}`}>Sign in</a> to keep your classes in your account (optional).</p>}
+    </fieldset>
+  </div>
+
+  <aside class="h-fit rounded-3xl bg-night p-6 text-white shadow-xl lg:sticky lg:top-28">
+    <p class="eyebrow">Your session</p>
+    <dl class="mt-4 grid gap-3 text-sm">
+      <div><dt class="text-white/70">Course</dt><dd class="font-semibold" data-summary-course>{chosen.title}</dd></div>
+      <div><dt class="text-white/70">When</dt><dd class="font-semibold" data-summary-when>Choose a date and time</dd><dd class="text-xs text-wheat" data-summary-local></dd></div>
+      <div><dt class="text-white/70">Where</dt><dd class="font-semibold" data-summary-platform>{PLATFORM_LABELS.google_meet}</dd></div>
+      <div class="flex items-end justify-between border-t border-white/15 pt-4"><dt class="text-white/70">Total</dt><dd class="font-serif text-3xl text-wheat" data-summary-total>{formatMoneyWhole(chosen.hourlyRateCents * hours)}</dd></div>
+    </dl>
+    <details class="mt-5 rounded-2xl bg-white/5 p-4 text-xs leading-5 ring-1 ring-white/10">
+      <summary class="cursor-pointer font-semibold">Booking guidelines</summary>
+      <ul class="mt-2 grid gap-1.5">{BOOKING_GUIDELINES.map((line) => <li class="flex gap-2"><Icon name="fa6-solid:check" class="mt-1 shrink-0 text-wheat" />{line}</li>)}</ul>
+    </details>
+    <label class="mt-5 flex items-start gap-3 text-xs leading-5"><input type="checkbox" name="agree" required class="mt-0.5 h-4 w-4 shrink-0 accent-wheat" /><span>I’ve read the booking guidelines and understand payment is needed to confirm my time.</span></label>
+    <button class="mt-5 flex w-full items-center justify-center gap-2 rounded-full bg-wheat px-6 py-3.5 text-sm font-semibold text-night transition hover:bg-white">Continue to payment <Icon name="fa6-solid:arrow-right" class="text-xs" /></button>
+    <p class="mt-3 text-center text-xs text-white/70">Your time is held for {TRAINING_RULES.holdMinutes} minutes while you pay with M-Pesa.</p>
+  </aside>
+</form>
+
+<script>
+  import { setupBookingForm } from '~/scripts/booking';
+  setupBookingForm();
+</script>

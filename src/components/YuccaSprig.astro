@@ -1,0 +1,6 @@
+---
+// Decorative yucca-leaf sprig echoing the logo; purely ornamental, so hidden from assistive tech.
+interface Props { class?: string }
+const leaves = ['M100 195Q70 120 25 60Q85 115 100 195Z', 'M100 195Q80 110 55 25Q95 105 100 195Z', 'M100 195Q88 100 92 8Q108 100 100 195Z', 'M100 195Q120 110 148 28Q106 105 100 195Z', 'M100 195Q130 120 178 62Q118 118 100 195Z', 'M100 195Q60 160 8 140Q70 150 100 195Z', 'M100 195Q140 158 194 140Q130 150 100 195Z'];
+---
+<svg class={Astro.props.class} viewBox="0 0 200 200" fill="currentColor" aria-hidden="true" focusable="false">{leaves.map((d) => <path d={d} />)}</svg>

@@ -1,0 +1,31 @@
+---
+import { desc, eq, sql } from 'drizzle-orm';
+import Icon from '~/components/Icon.astro';
+import StatusBadge from '~/components/StatusBadge.astro';
+import AccountLayout from '~/layouts/AccountLayout.astro';
+import { db, schema } from '~/lib/db';
+import { formatDate } from '~/lib/format';
+import { formatMoney } from '~/lib/money';
+
+const o = schema.orders;
+const orders = await db.select({
+  orderNumber: o.orderNumber, totalCents: o.totalCents, status: o.status, paymentStatus: o.paymentStatus, createdAt: o.createdAt,
+  items: sql<number>`(select coalesce(sum(quantity), 0) from order_items where order_id = ${o.id})`,
+}).from(o).where(eq(o.userId, Astro.locals.user!.id)).orderBy(desc(o.createdAt));
+---
+<AccountLayout active="orders" heading="Your orders" intro="Track deliveries and payments, and see what you ordered.">
+  {orders.length > 0 ? (
+    <div class="overflow-hidden rounded-3xl bg-white shadow-sm ring-1 ring-ink/5">
+      <ul class="divide-y divide-ink/10">
+        {orders.map((order) => (
+          <li><a href={`/account/orders/${order.orderNumber}`} class="grid gap-3 p-5 transition hover:bg-sand sm:grid-cols-[1fr_auto] sm:items-center">
+            <span><span class="block font-semibold">{order.orderNumber}</span><span class="text-xs text-gray-500">{formatDate(order.createdAt)} · {order.items} {Number(order.items) === 1 ? 'item' : 'items'}</span></span>
+            <span class="flex flex-wrap items-center gap-3"><StatusBadge status={order.status} /><StatusBadge status={order.paymentStatus} /><span class="font-semibold">{formatMoney(order.totalCents)}</span><Icon name="fa6-solid:chevron-right" class="text-xs text-gray-500" /></span>
+          </a></li>
+        ))}
+      </ul>
+    </div>
+  ) : (
+    <div class="rounded-3xl bg-white px-6 py-16 text-center shadow-sm ring-1 ring-ink/5"><Icon name="fa6-solid:bag-shopping" class="text-3xl text-sage" /><h2 class="mt-4 font-serif text-2xl">No orders yet</h2><p class="mt-2 text-sm text-gray-600">When you order fabric, you can follow it here from bag to doorstep.</p><a class="btn-primary mt-6" href="/shop">Browse fabrics</a></div>
+  )}
+</AccountLayout>

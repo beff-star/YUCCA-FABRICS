@@ -1,0 +1,57 @@
+---
+import Icon from '~/components/Icon.astro';
+import AdminLayout from '~/layouts/AdminLayout.astro';
+import { done, text } from '~/lib/admin-form';
+import { db, runBatch, schema } from '~/lib/db';
+import { googleConfigured, googleConnection } from '~/lib/google';
+import { mpesaConfigured } from '~/lib/mpesa';
+import { getSettings } from '~/lib/settings';
+
+const fields = [
+  { key: 'business_address', label: 'Address', kind: 'text' },
+  { key: 'business_phone', label: 'Phone (shown on the site; also used for WhatsApp if no link is set)', kind: 'text' },
+  { key: 'business_email', label: 'Email (receives orders, bookings and messages)', kind: 'email' },
+  { key: 'business_hours', label: 'Opening hours', kind: 'text' },
+  { key: 'bank_details', label: 'Bank transfer details (shown after a bank-transfer order)', kind: 'textarea' },
+  { key: 'whatsapp_url', label: 'WhatsApp link (e.g. https://wa.me/2547…)', kind: 'url' },
+  { key: 'instagram_url', label: 'Instagram link', kind: 'url' },
+  { key: 'facebook_url', label: 'Facebook link', kind: 'url' },
+  { key: 'tiktok_url', label: 'TikTok link', kind: 'url' },
+  { key: 'years_experience', label: 'Years of experience (leave blank to hide)', kind: 'number' },
+  { key: 'completed_projects', label: 'Completed projects (leave blank to hide)', kind: 'number' },
+  { key: 'verified_customers', label: 'Happy customers (leave blank to hide)', kind: 'number' },
+] as const;
+
+if (Astro.request.method === 'POST') {
+  const form = await Astro.request.formData();
+  const values: { key: string; value: string }[] = [];
+  for (const field of fields) {
+    const value = text(form, field.key, field.kind === 'textarea' ? 2000 : 300);
+    if (value && field.kind === 'email' && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value)) return done(Astro, 'error', 'Enter a valid business email.');
+    if (value && field.kind === 'url' && !/^https:\/\/\S+$/.test(value)) return done(Astro, 'error', `${field.label.split(' (')[0]} must be a full https:// link.`);
+    if (value && field.kind === 'number' && !/^\d{1,7}$/.test(value)) return done(Astro, 'error', `${field.label.split(' (')[0]} must be a whole number.`);
+    values.push({ key: field.key, value });
+  }
+  await runBatch(values.map(({ key, value }) => db.insert(schema.websiteSettings).values({ key, value })
+    .onConflictDoUpdate({ target: schema.websiteSettings.key, set: { value, updatedAt: new Date() } })));
+  return done(Astro, 'success', 'Settings saved.');
+}
+
+const settings = await getSettings(Astro.locals);
+const google = googleConfigured() ? (await googleConnection()).connected : false;
+---
+<AdminLayout title="Settings" heading="Website settings" intro="Contact details, links and the honest numbers shown on the site. Milestone numbers only appear once you fill them in.">
+  <div class="grid gap-6 xl:grid-cols-[1.3fr_.7fr]">
+    <form method="post" class="grid h-fit gap-4 rounded-3xl bg-white p-6 shadow-sm ring-1 ring-ink/5 sm:grid-cols-2">
+      {fields.map((field) => field.kind === 'textarea'
+        ? <label class="text-sm sm:col-span-2">{field.label}<textarea class="form-control mt-1" name={field.key} rows="4" maxlength="2000">{settings[field.key] ?? ''}</textarea></label>
+        : <label class="text-sm">{field.label}<input class="form-control mt-1" name={field.key} type={field.kind === 'number' ? 'text' : field.kind} inputmode={field.kind === 'number' ? 'numeric' : undefined} maxlength="300" value={settings[field.key] ?? ''} /></label>)}
+      <button class="btn-primary w-fit sm:col-span-2">Save settings</button>
+    </form>
+    <aside class="grid h-fit gap-4">
+      <a href="/admin/settings/google" class="flex items-center gap-4 rounded-3xl bg-white p-5 shadow-sm ring-1 ring-ink/5 transition hover:shadow-lg"><Icon name="fa6-brands:google" class="text-2xl text-forest" /><span><strong class="block">Google Meet</strong><span class="text-sm text-gray-600">{google ? 'Connected' : googleConfigured() ? 'Not connected' : 'Not set up'}</span></span></a>
+      <div class="flex items-center gap-4 rounded-3xl bg-white p-5 shadow-sm ring-1 ring-ink/5"><Icon name="fa6-solid:mobile-screen-button" class="text-2xl text-forest" /><span><strong class="block">M-Pesa</strong><span class="text-sm text-gray-600">{mpesaConfigured() ? 'Configured' : 'Not configured: set the MPESA_* secrets'}</span></span></div>
+      <p class="rounded-3xl bg-cream p-5 text-xs leading-5 text-gray-600">VAT rate, delivery fee and payment keys are set by the developer as Worker variables and secrets, not here.</p>
+    </aside>
+  </div>
+</AdminLayout>

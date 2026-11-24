@@ -1,0 +1,125 @@
+---
+import { PAYMENT_METHODS } from '~/db/schema';
+import CheckoutSteps from '~/components/CheckoutSteps.astro';
+import FormAlert from '~/components/FormAlert.astro';
+import Icon from '~/components/Icon.astro';
+import { PRODUCT_PLACEHOLDER_IMAGE } from '~/data/fabric-collection';
+import BaseLayout from '~/layouts/BaseLayout.astro';
+import { grantAccess } from '~/lib/access';
+import { findCartId } from '~/lib/cart';
+import { CheckoutError, placeOrder, priceCart, type CheckoutDetails } from '~/lib/checkout';
+import { emailBody, sendEmail } from '~/lib/email';
+import { setFlash } from '~/lib/flash';
+import { paymentMethodLabel } from '~/lib/labels';
+import { formatMoney } from '~/lib/money';
+import { taxRate } from '~/lib/pricing';
+
+const user = Astro.locals.user;
+const cartId = await findCartId(Astro);
+const errors: string[] = [];
+const field = (form: FormData, name: string, max: number) => String(form.get(name) ?? '').trim().slice(0, max);
+const values: CheckoutDetails = {
+  name: user?.name ?? '', email: user?.email ?? '', phone: user?.phone ?? '', addressLine: '', city: '',
+  county: null, postalCode: null, deliveryInstructions: null, paymentMethod: 'mpesa',
+};
+
+if (Astro.request.method === 'POST' && cartId) {
+  const form = await Astro.request.formData();
+  const method = String(form.get('payment_method'));
+  Object.assign(values, {
+    name: field(form, 'name', 150), email: field(form, 'email', 190).toLowerCase(), phone: field(form, 'phone', 40),
+    addressLine: field(form, 'address_line', 255), city: field(form, 'city', 100),
+    county: field(form, 'county', 100) || null, postalCode: field(form, 'postal_code', 30) || null,
+    deliveryInstructions: field(form, 'delivery_instructions', 500) || null,
+    paymentMethod: (PAYMENT_METHODS as readonly string[]).includes(method) ? method : 'mpesa',
+  });
+  if (!values.name || !values.phone || !values.addressLine || !values.city) errors.push('Please complete your name, phone, address and town.');
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(values.email)) errors.push('Enter a valid email address.');
+  if (errors.length === 0) {
+    try {
+      const order = await placeOrder(cartId, user?.id ?? null, values);
+      grantAccess(Astro.cookies, order.orderNumber, order.accessToken);
+      const link = new URL(`/order/${order.orderNumber}?t=${order.accessToken}`, Astro.url).toString();
+      Astro.locals.cfContext.waitUntil(sendEmail({
+        to: values.email,
+        subject: `Your Yucca Homeware order ${order.orderNumber}`,
+        text: emailBody(
+          `Hello ${values.name},`,
+          `Thank you for your order ${order.orderNumber}.`,
+          order.lines.map((line) => `- ${line.name} × ${line.quantity}: ${formatMoney(line.lineTotalCents)}`).join('\n'),
+          `Total: ${formatMoney(order.totals.totalCents)} (${paymentMethodLabel(values.paymentMethod)})`,
+          `View your order and payment details: ${link}`,
+        ),
+      }));
+      return Astro.redirect(`/order/${order.orderNumber}`, 303);
+    } catch (error) {
+      if (!(error instanceof CheckoutError)) throw error;
+      setFlash(Astro.cookies, 'error', error.message);
+      return Astro.redirect('/cart', 303);
+    }
+  }
+}
+
+const { lines, code, coupon, totals } = await priceCart(cartId, user?.id ?? null);
+if (lines.length === 0) {
+  setFlash(Astro.cookies, 'info', 'Your bag is empty. Find a fabric you love first.');
+  return Astro.redirect('/shop');
+}
+const paymentOptions = [
+  ['mpesa', 'fa6-solid:mobile-screen-button', 'We’ll send a secure payment prompt to your phone after you place your order.'],
+  ['bank_transfer', 'fa6-solid:building-columns', 'Bank details and reference instructions appear after you place your order.'],
+  ['cod', 'fa6-solid:money-bill-wave', 'Pay when your order arrives.'],
+] as const;
+---
+<BaseLayout title="Checkout | Yucca Homeware" noindex>
+  <section class="bg-cream"><div class="mx-auto max-w-7xl px-5 py-10"><p class="eyebrow">Almost yours</p><h1 class="mt-2 font-serif text-3xl sm:text-4xl">Delivery &amp; payment</h1><CheckoutSteps current={2} /></div></section>
+  <section class="mx-auto max-w-7xl px-5 py-10">
+    {errors.map((error) => <FormAlert message={error} class="mb-5" />)}
+    <form method="post" class="grid gap-8 lg:grid-cols-[1fr_400px]">
+      <div class="grid content-start gap-6">
+        <fieldset class="grid gap-4 rounded-3xl bg-white p-6 shadow-sm ring-1 ring-ink/5 sm:grid-cols-2 sm:p-8">
+          <legend class="contents"><span class="flex items-center gap-3 font-serif text-2xl sm:col-span-2"><span class="grid h-8 w-8 place-items-center rounded-full bg-forest font-sans text-sm text-white">1</span>Your details</span></legend>
+          <label class="text-sm font-medium sm:col-span-2">Full name<input class="form-control mt-1" name="name" required maxlength="150" autocomplete="name" value={values.name} /></label>
+          <label class="text-sm font-medium">Email<input class="form-control mt-1" type="email" name="email" required maxlength="190" autocomplete="email" value={values.email} /></label>
+          <label class="text-sm font-medium">Phone<input class="form-control mt-1" type="tel" name="phone" required maxlength="40" autocomplete="tel" value={values.phone} /></label>
+          {!user && <p class="text-xs text-gray-500 sm:col-span-2">Have an account? <a class="font-semibold text-forest underline" href="/auth/login?next=/checkout">Sign in</a> to track this order later.</p>}
+        </fieldset>
+        <fieldset class="grid gap-4 rounded-3xl bg-white p-6 shadow-sm ring-1 ring-ink/5 sm:grid-cols-2 sm:p-8">
+          <legend class="contents"><span class="flex items-center gap-3 font-serif text-2xl sm:col-span-2"><span class="grid h-8 w-8 place-items-center rounded-full bg-forest font-sans text-sm text-white">2</span>Delivery address</span></legend>
+          <label class="text-sm font-medium sm:col-span-2">Address<input class="form-control mt-1" name="address_line" required maxlength="255" autocomplete="street-address" placeholder="Building, street, estate" value={values.addressLine} /></label>
+          <label class="text-sm font-medium">Town / City<input class="form-control mt-1" name="city" required maxlength="100" autocomplete="address-level2" value={values.city} /></label>
+          <label class="text-sm font-medium">County (optional)<input class="form-control mt-1" name="county" maxlength="100" autocomplete="address-level1" value={values.county ?? ''} /></label>
+          <label class="text-sm font-medium">Postal code (optional)<input class="form-control mt-1" name="postal_code" maxlength="30" autocomplete="postal-code" value={values.postalCode ?? ''} /></label>
+          <label class="text-sm font-medium sm:col-span-2">Delivery instructions (optional)<textarea class="form-control mt-1" name="delivery_instructions" rows="2" maxlength="500" placeholder="Gate code, landmark or best time to deliver">{values.deliveryInstructions ?? ''}</textarea></label>
+        </fieldset>
+        <fieldset class="grid gap-3 rounded-3xl bg-white p-6 shadow-sm ring-1 ring-ink/5 sm:p-8">
+          <legend class="contents"><span class="mb-1 flex items-center gap-3 font-serif text-2xl"><span class="grid h-8 w-8 place-items-center rounded-full bg-forest font-sans text-sm text-white">3</span>Payment method</span></legend>
+          {paymentOptions.map(([value, icon, hint]) => (
+            <label class="flex cursor-pointer items-center gap-4 rounded-2xl border border-ink/15 p-4 transition hover:border-forest/50 has-[:checked]:border-forest has-[:checked]:bg-cream has-[:checked]:ring-1 has-[:checked]:ring-forest">
+              <input type="radio" name="payment_method" value={value} class="h-4 w-4 accent-forest" checked={values.paymentMethod === value} required />
+              <span class="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-white text-lg text-forest ring-1 ring-ink/10"><Icon name={icon} /></span>
+              <span class="text-sm"><strong class="block">{paymentMethodLabel(value)}</strong><span class="text-xs text-gray-600">{hint}</span></span>
+            </label>
+          ))}
+        </fieldset>
+      </div>
+      <aside class="h-fit rounded-3xl bg-white p-6 shadow-sm ring-1 ring-ink/5 lg:sticky lg:top-28">
+        <h2 class="font-serif text-2xl">Order summary</h2>
+        <ul class="mt-5 grid gap-4">
+          {lines.map((item) => <li class="flex items-center gap-3"><span class="relative shrink-0"><img src={item.image ?? PRODUCT_PLACEHOLDER_IMAGE} alt="" class="h-14 w-14 rounded-xl object-cover object-top" /><span class="absolute -right-2 -top-2 grid h-5 min-w-5 place-items-center rounded-full bg-ink px-1 text-[10px] font-semibold text-white">{item.quantity}</span></span><span class="min-w-0 flex-1 truncate text-sm font-medium">{item.name}</span><span class="text-sm">{formatMoney(item.lineTotalCents)}</span></li>)}
+        </ul>
+        <dl class="mt-5 grid gap-3 border-t border-ink/10 pt-5 text-sm">
+          <div class="flex justify-between"><dt class="text-gray-600">Items</dt><dd>{formatMoney(totals.subtotalCents)}</dd></div>
+          {totals.discountCents > 0 && <div class="flex justify-between"><dt class="text-gray-600">Coupon ({code})</dt><dd>−{formatMoney(totals.discountCents)}</dd></div>}
+          {code && !coupon?.ok && <p class="text-xs text-[#7A2E22]">Your coupon is no longer available and must be removed from your bag before ordering.</p>}
+          <div class="flex justify-between"><dt class="text-gray-600">VAT ({Math.round(taxRate() * 100)}%)</dt><dd>{formatMoney(totals.taxCents)}</dd></div>
+          <div class="flex justify-between"><dt class="text-gray-600">Delivery</dt><dd>{formatMoney(totals.deliveryFeeCents)}</dd></div>
+          <div class="flex justify-between border-t border-ink/10 pt-4 text-lg font-semibold"><dt>Total</dt><dd>{formatMoney(totals.totalCents)}</dd></div>
+        </dl>
+        <button class="btn-primary mt-6 w-full py-3.5 shadow-md"><Icon name="fa6-solid:lock" class="text-xs" />Place order</button>
+        <p class="mt-4 text-xs leading-5 text-gray-500">Your final total is calculated securely on our server. We never store card or M-Pesa PIN details.</p>
+        <a href="/cart" class="mt-4 inline-flex items-center gap-2 text-xs font-semibold text-forest"><Icon name="fa6-solid:arrow-left" />Back to bag</a>
+      </aside>
+    </form>
+  </section>
+</BaseLayout>

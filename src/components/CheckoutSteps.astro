@@ -1,0 +1,22 @@
+---
+import Icon from './Icon.astro';
+
+interface Props { current: 1 | 2 | 3 }
+const { current } = Astro.props;
+const steps = ['Bag', 'Details & payment', 'Confirmation'];
+---
+<ol class="mt-6 flex items-center gap-2 text-xs font-semibold sm:gap-3 sm:text-sm" aria-label="Checkout progress">
+  {steps.map((label, index) => {
+    const step = index + 1;
+    const state = step < current ? 'done' : step === current ? 'current' : 'next';
+    return (
+      <>
+        {index > 0 && <li class="h-px w-6 bg-ink/20 sm:w-10" aria-hidden="true"></li>}
+        <li class:list={['flex items-center gap-2', { 'text-gray-500': state === 'next' }]} aria-current={state === 'current' ? 'step' : undefined}>
+          <span class:list={['grid h-7 w-7 place-items-center rounded-full', state === 'next' ? 'bg-white text-gray-500 ring-1 ring-ink/15' : 'bg-forest text-white']}>{state === 'done' ? <Icon name="fa6-solid:check" class="text-[10px]" /> : step}</span>
+          <span class:list={[{ 'hidden sm:inline': state !== 'current' }]}>{label}</span>
+        </li>
+      </>
+    );
+  })}
+</ol>

@@ -1,0 +1,81 @@
+---
+import { asc, eq, gte } from 'drizzle-orm';
+import Icon from '~/components/Icon.astro';
+import { TRAINING_RULES } from '~/data/courses';
+import AdminLayout from '~/layouts/AdminLayout.astro';
+import { checked, done, text } from '~/lib/admin-form';
+import { db, runBatch, schema } from '~/lib/db';
+import { formatIsoDate, todayInNairobi } from '~/lib/format';
+
+const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+const HOURS = Array.from({ length: 17 }, (_, i) => `${String(i + 6).padStart(2, '0')}:00`);
+
+if (Astro.request.method === 'POST') {
+  const form = await Astro.request.formData();
+  const intent = form.get('intent');
+  if (intent === 'hours') {
+    const rows: { weekday: number; startTime: string; endTime: string }[] = [];
+    for (let day = 0; day < 7; day++) {
+      if (!checked(form, `open_${day}`)) continue;
+      const startTime = text(form, `start_${day}`, 5);
+      const endTime = text(form, `end_${day}`, 5);
+      if (!HOURS.includes(startTime) || !HOURS.includes(endTime) || endTime <= startTime) return done(Astro, 'error', `Check the hours for ${DAYS[day]}: closing must be after opening.`);
+      rows.push({ weekday: day, startTime, endTime });
+    }
+    await runBatch([db.delete(schema.trainingAvailability), ...rows.map((row) => db.insert(schema.trainingAvailability).values(row))]);
+    return done(Astro, 'success', 'Opening hours saved. Existing bookings are not affected.');
+  }
+  if (intent === 'blackout') {
+    const date = text(form, 'date', 10);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return done(Astro, 'error', 'Choose a date.');
+    await db.insert(schema.trainingBlackouts).values({ date, reason: text(form, 'reason', 200) || null }).onConflictDoNothing();
+    return done(Astro, 'success', `${formatIsoDate(date)} is now closed for new bookings.`);
+  }
+  if (intent === 'reopen') {
+    await db.delete(schema.trainingBlackouts).where(eq(schema.trainingBlackouts.date, text(form, 'date', 10)));
+    return done(Astro, 'success', 'Date reopened.');
+  }
+}
+
+const [weekly, blackouts] = await db.batch([
+  db.select().from(schema.trainingAvailability).orderBy(asc(schema.trainingAvailability.weekday)),
+  db.select().from(schema.trainingBlackouts).where(gte(schema.trainingBlackouts.date, todayInNairobi())).orderBy(asc(schema.trainingBlackouts.date)),
+]);
+const byDay = new Map(weekly.map((row) => [row.weekday, row]));
+---
+<AdminLayout title="Opening hours" heading="Class opening hours" intro={`When customers can book virtual classes (Nairobi time). Sessions start on the hour, at least ${TRAINING_RULES.leadHours} hours ahead and up to ${TRAINING_RULES.horizonDays} days ahead.`}>
+  <a href="/admin/training" class="mb-5 inline-flex items-center gap-2 text-sm font-semibold text-forest"><Icon name="fa6-solid:arrow-left" class="text-xs" />Class bookings</a>
+  <div class="grid gap-6 xl:grid-cols-[1.2fr_.8fr]">
+    <form method="post" class="rounded-3xl bg-white p-6 shadow-sm ring-1 ring-ink/5">
+      <input type="hidden" name="intent" value="hours" />
+      <h2 class="font-serif text-2xl">Weekly hours</h2>
+      <div class="mt-4 grid gap-3">
+        {DAYS.map((name, day) => {
+          const row = byDay.get(day);
+          return (
+            <fieldset class="grid grid-cols-[1fr_auto_auto] items-center gap-3 rounded-2xl bg-sand p-3 sm:grid-cols-[10rem_auto_auto]">
+              <legend class="sr-only">{name}</legend>
+              <label class="flex items-center gap-2 text-sm font-semibold"><input type="checkbox" name={`open_${day}`} class="h-4 w-4 accent-forest" checked={Boolean(row)} />{name}</label>
+              <label class="text-xs">From<select class="form-control mt-1 py-2" name={`start_${day}`}>{HOURS.map((h) => <option selected={(row?.startTime ?? '09:00') === h}>{h}</option>)}</select></label>
+              <label class="text-xs">To<select class="form-control mt-1 py-2" name={`end_${day}`}>{HOURS.map((h) => <option selected={(row?.endTime ?? '17:00') === h}>{h}</option>)}</select></label>
+            </fieldset>
+          );
+        })}
+      </div>
+      <button class="btn-primary mt-5">Save hours</button>
+    </form>
+    <section class="rounded-3xl bg-white p-6 shadow-sm ring-1 ring-ink/5">
+      <h2 class="font-serif text-2xl">Closed days</h2>
+      <p class="mt-1 text-xs text-gray-500">Holidays or days away. Existing bookings on these days are not cancelled.</p>
+      <form method="post" class="mt-4 grid gap-3"><input type="hidden" name="intent" value="blackout" />
+        <label class="text-sm">Date<input class="form-control mt-1" type="date" name="date" min={todayInNairobi()} required /></label>
+        <label class="text-sm">Reason (optional)<input class="form-control mt-1" name="reason" maxlength="200" placeholder="e.g. Public holiday" /></label>
+        <button class="btn-secondary w-fit py-2">Close this date</button>
+      </form>
+      <ul class="mt-5 grid gap-2">
+        {blackouts.map((row) => <li class="flex items-center justify-between gap-3 rounded-xl bg-sand px-4 py-2 text-sm"><span><strong>{formatIsoDate(row.date)}</strong>{row.reason && <span class="text-gray-600"> · {row.reason}</span>}</span><form method="post"><input type="hidden" name="intent" value="reopen" /><input type="hidden" name="date" value={row.date} /><button class="text-xs font-semibold underline">Reopen</button></form></li>)}
+        {blackouts.length === 0 && <li class="text-sm text-gray-600">No upcoming closed days.</li>}
+      </ul>
+    </section>
+  </div>
+</AdminLayout>

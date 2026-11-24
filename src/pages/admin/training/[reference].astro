@@ -1,0 +1,148 @@
+---
+import { desc, eq } from 'drizzle-orm';
+import Icon from '~/components/Icon.astro';
+import StatusBadge from '~/components/StatusBadge.astro';
+import { PLATFORM_LABELS } from '~/data/courses';
+import AdminLayout from '~/layouts/AdminLayout.astro';
+import { done, text } from '~/lib/admin-form';
+import { db, schema } from '~/lib/db';
+import { formatDateTime, formatLongDate, formatTime } from '~/lib/format';
+import { googleConfigured, googleConnection } from '~/lib/google';
+import { formatMoney } from '~/lib/money';
+import { markPaid } from '~/lib/payments';
+import { BookingError, bookingUrl, bookingWithCourse, cancelBooking, createMeetingFor, rescheduleBooking, sendBookingEmail } from '~/lib/training';
+
+const data = await bookingWithCourse(Astro.params.reference ?? '');
+if (!data) return Astro.rewrite('/404');
+const { booking, course } = data;
+const t = schema.trainingBookings;
+const latestPayment = async () => (await db.select().from(schema.payments).where(eq(schema.payments.trainingBookingId, booking.id)).orderBy(desc(schema.payments.id)).limit(1))[0];
+const waitUntil = (promise: Promise<unknown>) => Astro.locals.cfContext.waitUntil(promise);
+
+if (Astro.request.method === 'POST') {
+  const form = await Astro.request.formData();
+  switch (form.get('intent')) {
+    case 'link': {
+      const url = text(form, 'meeting_url', 500);
+      if (url && !/^https:\/\/[^\s]+$/.test(url)) return done(Astro, 'error', 'Enter a full https:// meeting link.');
+      await db.update(t).set({ meetingUrl: url || null }).where(eq(t.id, booking.id));
+      if (url && booking.status === 'confirmed' && url !== booking.meetingUrl) waitUntil(sendBookingEmail({ ...booking, meetingUrl: url }, course, 'link'));
+      return done(Astro, 'success', url ? 'Meeting link saved and emailed to the customer.' : 'Meeting link removed.');
+    }
+    case 'meet': {
+      try {
+        const link = await createMeetingFor(booking, course);
+        if (link) waitUntil(sendBookingEmail({ ...booking, meetingUrl: link }, course, 'link'));
+        return done(Astro, link ? 'success' : 'info', link ? 'Google Meet link created; Google has invited the customer.' : 'The calendar event was created but Google hasn’t returned a Meet link yet. Reload in a minute.');
+      } catch (error) {
+        console.error('Admin Meet creation failed', String(error));
+        return done(Astro, 'error', 'Google Meet link could not be created. Check the Google connection in Settings.');
+      }
+    }
+    case 'reschedule': {
+      const date = text(form, 'date', 10);
+      const time = text(form, 'time', 5);
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !/^\d{2}:00$/.test(time)) return done(Astro, 'error', 'Choose a date and an on-the-hour start time.');
+      try {
+        await rescheduleBooking(booking, course, date, time);
+      } catch (error) {
+        if (error instanceof BookingError) return done(Astro, 'error', error.message);
+        throw error;
+      }
+      return done(Astro, 'success', 'Booking moved. The customer has been emailed the new time.');
+    }
+    case 'paid': {
+      const payment = await latestPayment();
+      if (!payment) return done(Astro, 'error', 'This booking has no payment record.');
+      await markPaid(payment, text(form, 'receipt', 80).toUpperCase() || null, waitUntil);
+      return done(Astro, 'success', 'Payment recorded. The booking is confirmed if its time is still free.');
+    }
+    case 'complete':
+      await db.update(t).set({ status: 'completed' }).where(eq(t.id, booking.id));
+      return done(Astro, 'success', 'Marked as completed.');
+    case 'cancel':
+      await cancelBooking(booking);
+      return done(Astro, 'success', 'Booking cancelled and its time released. Refund any payment separately.');
+    case 'refunded': {
+      const payment = await latestPayment();
+      if (payment) await db.update(schema.payments).set({ status: 'refunded' }).where(eq(schema.payments.id, payment.id));
+      return done(Astro, 'success', 'Payment marked as refunded.');
+    }
+    case 'resend':
+      await sendBookingEmail(booking, course, 'confirmed');
+      return done(Astro, 'success', 'Confirmation email sent again.');
+    case 'notes':
+      await db.update(t).set({ adminNotes: text(form, 'admin_notes', 5000) || null }).where(eq(t.id, booking.id));
+      return done(Astro, 'success', 'Notes saved.');
+  }
+}
+
+const payment = await latestPayment();
+const google = googleConfigured() ? await googleConnection() : { connected: false };
+const nairobiDate = new Date(booking.startsAt.getTime() + 3 * 3_600_000).toISOString();
+const card = 'rounded-3xl bg-white p-6 shadow-sm ring-1 ring-ink/5';
+---
+<AdminLayout title={`Class ${booking.reference}`} heading={course.title} intro={`${booking.reference} · ${formatLongDate(booking.startsAt)} at ${formatTime(booking.startsAt)} (EAT) · ${booking.hours} h`}>
+  <a href="/admin/training" class="mb-5 inline-flex items-center gap-2 text-sm font-semibold text-forest"><Icon name="fa6-solid:arrow-left" class="text-xs" />All bookings</a>
+  <div class="grid gap-6 xl:grid-cols-[1.1fr_.9fr]">
+    <div class="grid content-start gap-6">
+      <section class={card}>
+        <div class="flex flex-wrap items-center gap-3"><StatusBadge status={booking.status} />{payment && <StatusBadge status={payment.status} />}<span class="text-sm text-gray-600">{formatMoney(booking.totalCents)} ({booking.hours} × {formatMoney(booking.rateCents)})</span></div>
+        <dl class="mt-5 grid gap-4 text-sm sm:grid-cols-2">
+          <div><dt class="text-xs uppercase tracking-wider text-gray-500">Customer</dt><dd class="mt-1 font-semibold">{booking.name}</dd><dd><a class="underline" href={`mailto:${booking.email}`}>{booking.email}</a></dd><dd><a class="underline" href={`tel:${booking.phone}`}>{booking.phone}</a></dd></div>
+          <div><dt class="text-xs uppercase tracking-wider text-gray-500">Platform</dt><dd class="mt-1 font-semibold">{PLATFORM_LABELS[booking.platform]}</dd><dd>Experience: {booking.skillLevel}</dd></div>
+          <div class="sm:col-span-2"><dt class="text-xs uppercase tracking-wider text-gray-500">Goals</dt><dd class="mt-1 whitespace-pre-line leading-6">{booking.goals}</dd></div>
+          {payment?.reference && <div><dt class="text-xs uppercase tracking-wider text-gray-500">Payment reference</dt><dd class="mt-1 font-mono">{payment.reference}</dd></div>}
+          <div><dt class="text-xs uppercase tracking-wider text-gray-500">Booked</dt><dd class="mt-1">{formatDateTime(booking.createdAt)}</dd></div>
+        </dl>
+        <p class="mt-5 break-all text-xs text-gray-500">Customer page: <a class="underline" href={bookingUrl(booking.reference)} target="_blank" rel="noopener">{bookingUrl(booking.reference)}</a></p>
+      </section>
+
+      <section class={card}>
+        <h2 class="font-serif text-xl">Meeting link</h2>
+        {booking.meetingUrl && <p class="mt-2 break-all text-sm"><a class="font-semibold text-forest underline" href={booking.meetingUrl} target="_blank" rel="noopener">{booking.meetingUrl}</a></p>}
+        <form method="post" class="mt-4 flex flex-wrap gap-2"><input type="hidden" name="intent" value="link" /><label class="sr-only" for="meeting-url">Meeting link</label><input id="meeting-url" class="form-control min-w-0 flex-1" name="meeting_url" type="url" placeholder="https://zoom.us/j/… or https://meet.google.com/…" value={booking.meetingUrl ?? ''} /><button class="btn-primary py-2">Save &amp; email</button></form>
+        {booking.platform === 'google_meet' && (
+          google.connected
+            ? <form method="post" class="mt-3"><input type="hidden" name="intent" value="meet" /><button class="btn-secondary py-2"><Icon name="fa6-brands:google" />{booking.calendarEventId ? 'Create a new Meet link' : 'Create Google Meet link'}</button></form>
+            : <p class="mt-3 text-xs text-gray-500">Connect Google in <a class="underline" href="/admin/settings/google">Settings → Google Meet</a> to create Meet links automatically.</p>
+        )}
+      </section>
+
+      <section class={card}>
+        <h2 class="font-serif text-xl">Notes for the team</h2>
+        <form method="post" class="mt-3 grid gap-3"><input type="hidden" name="intent" value="notes" /><textarea class="form-control" name="admin_notes" rows="3" maxlength="5000" aria-label="Notes">{booking.adminNotes ?? ''}</textarea><button class="btn-secondary w-fit py-2">Save notes</button></form>
+      </section>
+    </div>
+
+    <div class="grid content-start gap-6">
+      {payment?.status !== 'paid' && booking.status !== 'cancelled' && (
+        <section class={card}>
+          <h2 class="font-serif text-xl">Record a payment</h2>
+          <p class="mt-1 text-xs text-gray-500">Use this when the customer paid another way (or M-Pesa confirmation was delayed). It confirms the booking if its time is still free.</p>
+          <form method="post" class="mt-3 flex flex-wrap gap-2" data-confirm="Mark this booking as paid?"><input type="hidden" name="intent" value="paid" /><label class="sr-only" for="receipt">Receipt or reference</label><input id="receipt" class="form-control min-w-0 flex-1" name="receipt" maxlength="80" placeholder="M-Pesa receipt or bank reference" /><button class="btn-primary py-2">Mark paid</button></form>
+        </section>
+      )}
+      {booking.status !== 'cancelled' && booking.status !== 'expired' && (
+        <section class={card}>
+          <h2 class="font-serif text-xl">Reschedule</h2>
+          <form method="post" class="mt-3 grid gap-3 sm:grid-cols-[1fr_auto_auto] sm:items-end"><input type="hidden" name="intent" value="reschedule" />
+            <label class="text-sm">Date<input class="form-control mt-1" type="date" name="date" required value={nairobiDate.slice(0, 10)} /></label>
+            <label class="text-sm">Start (EAT)<select class="form-control mt-1" name="time">{Array.from({ length: 15 }, (_, i) => `${String(i + 7).padStart(2, '0')}:00`).map((time) => <option selected={nairobiDate.slice(11, 16) === time}>{time}</option>)}</select></label>
+            <button class="btn-secondary py-3">Move</button>
+          </form>
+          <p class="mt-2 text-xs text-gray-500">Staff can move a booking outside the public opening hours; overlaps with other bookings are still refused.</p>
+        </section>
+      )}
+      <section class={card}>
+        <h2 class="font-serif text-xl">Status</h2>
+        <div class="mt-3 flex flex-wrap gap-2">
+          {booking.status === 'confirmed' && <form method="post"><input type="hidden" name="intent" value="resend" /><button class="btn-secondary py-2">Resend confirmation</button></form>}
+          {booking.status === 'confirmed' && <form method="post"><input type="hidden" name="intent" value="complete" /><button class="btn-secondary py-2">Mark completed</button></form>}
+          {booking.status !== 'cancelled' && booking.status !== 'completed' && <form method="post" data-confirm="Cancel this booking and release its time? Google will notify the attendee."><input type="hidden" name="intent" value="cancel" /><button class="rounded-full border border-[#7A2E22]/30 px-5 py-2 text-sm font-semibold text-[#7A2E22] hover:bg-[#F6E1DE]">Cancel booking</button></form>}
+          {payment?.status === 'paid' && <form method="post" data-confirm="Mark this payment as refunded? (Send the money back in M-Pesa first.)"><input type="hidden" name="intent" value="refunded" /><button class="btn-secondary py-2">Mark refunded</button></form>}
+        </div>
+      </section>
+    </div>
+  </div>
+</AdminLayout>

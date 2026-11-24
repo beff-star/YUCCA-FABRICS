@@ -1,0 +1,18 @@
+---
+// Numbered pages that keep the current query string (filters, search).
+interface Props { page: number; pages: number }
+const { page, pages } = Astro.props;
+const hrefFor = (n: number) => {
+  const params = new URLSearchParams(Astro.url.search);
+  if (n === 1) params.delete('page'); else params.set('page', String(n));
+  const query = params.toString();
+  return query ? `?${query}` : Astro.url.pathname;
+};
+---
+{pages > 1 && (
+  <nav class="mt-10 flex flex-wrap justify-center gap-2" aria-label="Pagination">
+    {Array.from({ length: pages }, (_, i) => i + 1).map((n) => (
+      <a class:list={['grid h-10 min-w-10 place-items-center rounded-full px-3 text-sm', n === page ? 'bg-forest text-white' : 'bg-white ring-1 ring-ink/10 hover:ring-forest']} href={hrefFor(n)} aria-current={n === page ? 'page' : undefined}><span class="sr-only">Page </span>{n}</a>
+    ))}
+  </nav>
+)}

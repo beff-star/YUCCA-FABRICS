@@ -1,0 +1,10 @@
+---
+import { formatMoney } from '~/lib/money';
+
+interface Props { priceCents: number; salePriceCents: number | null; unit: string }
+const { priceCents, salePriceCents, unit } = Astro.props;
+const onSale = salePriceCents !== null && salePriceCents < priceCents;
+---
+{onSale ? (
+  <><span class="text-clay">{formatMoney(salePriceCents!)}</span> <s class="text-xs font-normal text-gray-500"><span class="sr-only">was </span>{formatMoney(priceCents)}</s></>
+) : formatMoney(priceCents)}<span class="text-xs font-normal text-gray-500"> / {unit}</span>

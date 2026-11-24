@@ -1,0 +1,26 @@
+---
+import Icon from '~/components/Icon.astro';
+import BaseLayout from './BaseLayout.astro';
+
+interface Props { title: string; active: 'privacy' | 'terms'; draftNote: string; description?: string }
+const { title, active, draftNote, description } = Astro.props;
+const links = [
+  { key: 'privacy', href: '/privacy', label: 'Privacy policy', icon: 'fa6-solid:shield-halved' },
+  { key: 'terms', href: '/terms', label: 'Terms of use', icon: 'fa6-solid:file-lines' },
+];
+---
+<BaseLayout title={`${title} | Yucca Homeware`} description={description}>
+  <section class="bg-cream px-5 py-14 text-center"><p class="eyebrow">The important details</p><h1 class="mt-3 font-serif text-4xl sm:text-5xl">{title}</h1></section>
+  <section class="mx-auto grid max-w-6xl gap-8 px-5 py-12 lg:grid-cols-[1fr_260px]">
+    <article class="rounded-3xl bg-white p-7 shadow-sm ring-1 ring-ink/5 sm:p-10">
+      {Astro.locals.user?.role === 'admin' && <p class="mb-6 flex gap-3 rounded-2xl bg-[#FBF0D9] p-4 text-sm text-[#6B4A07]"><Icon name="fa6-solid:triangle-exclamation" class="mt-1 shrink-0" /><span><strong>Only admins see this:</strong> {draftNote}</span></p>}
+      <div class="legal-body"><slot /></div>
+    </article>
+    <aside class="grid h-fit gap-4 lg:sticky lg:top-28">
+      <nav class="rounded-3xl bg-white p-3 shadow-sm ring-1 ring-ink/5" aria-label="Legal pages">
+        {links.map((link) => <a class:list={['flex items-center gap-3 rounded-xl px-4 py-3 text-sm font-medium transition', link.key === active ? 'bg-forest text-white' : 'hover:bg-cream']} href={link.href} aria-current={link.key === active ? 'page' : undefined}><Icon name={link.icon} class="w-4" />{link.label}</a>)}
+      </nav>
+      <div class="rounded-3xl bg-cream p-6 text-sm"><Icon name="fa6-regular:comments" class="text-xl text-sage" /><p class="mt-3 font-semibold">Questions?</p><p class="mt-1 leading-6 text-gray-600">We’re happy to explain anything here.</p><a class="mt-3 inline-flex items-center gap-2 font-semibold text-forest" href="/contact">Contact us <Icon name="fa6-solid:arrow-right" class="text-xs" /></a></div>
+    </aside>
+  </section>
+</BaseLayout>

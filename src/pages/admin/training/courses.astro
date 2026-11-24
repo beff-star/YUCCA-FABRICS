@@ -1,0 +1,68 @@
+---
+import { asc, eq } from 'drizzle-orm';
+import Icon from '~/components/Icon.astro';
+import { LEVEL_LABELS, tracks, type TrainingTrack } from '~/data/courses';
+import { TRAINING_TRACKS } from '~/db/schema';
+import AdminLayout from '~/layouts/AdminLayout.astro';
+import { cents, checked, done, int, text } from '~/lib/admin-form';
+import { constraintFailed, db, schema } from '~/lib/db';
+import { slugify } from '~/lib/format';
+import { centsToInput, formatMoneyWhole } from '~/lib/money';
+
+const c = schema.trainingCourses;
+const LEVELS = Object.keys(LEVEL_LABELS) as (keyof typeof LEVEL_LABELS)[];
+
+if (Astro.request.method === 'POST') {
+  const form = await Astro.request.formData();
+  const id = int(form, 'id');
+  const title = text(form, 'title', 200);
+  const rate = cents(form, 'hourly_rate');
+  const track = text(form, 'track', 20) as TrainingTrack;
+  const level = text(form, 'level', 20) as (typeof LEVELS)[number];
+  const outcomes = text(form, 'outcomes', 2000).split('\n').map((line) => line.trim()).filter(Boolean).slice(0, 8);
+  const values = {
+    title, track, level, hourlyRateCents: rate ?? 0, summary: text(form, 'summary', 500), outcomes,
+    whoFor: text(form, 'who_for', 500), sortOrder: int(form, 'sort_order') ?? 0, isActive: checked(form, 'is_active'),
+  };
+  if (!title || rate === null || rate <= 0 || !TRAINING_TRACKS.includes(track) || !LEVELS.includes(level) || !values.summary || !values.whoFor || outcomes.length === 0) {
+    return done(Astro, 'error', 'Fill in the title, a valid hourly rate, track, level, summary, who it’s for and at least one outcome.');
+  }
+  try {
+    if (id) await db.update(c).set(values).where(eq(c.id, id));
+    else await db.insert(c).values({ ...values, slug: slugify(title) });
+  } catch (error) {
+    if (constraintFailed(error, 'UNIQUE')) return done(Astro, 'error', 'A course with that title already exists.');
+    throw error;
+  }
+  return done(Astro, 'success', id ? 'Course updated. Existing bookings keep the rate they were booked at.' : 'Course added.', '/admin/training/courses');
+}
+
+const courses = await db.select().from(c).orderBy(asc(c.sortOrder));
+const editId = Number(Astro.url.searchParams.get('edit'));
+const edit = courses.find((course) => course.id === editId) ?? null;
+---
+<AdminLayout title="Courses & rates" heading="Courses & rates" intro="Edit titles, hourly rates and course copy. Changes show on the website immediately; existing bookings keep the rate they were booked at.">
+  <a href="/admin/training" class="mb-5 inline-flex items-center gap-2 text-sm font-semibold text-forest"><Icon name="fa6-solid:arrow-left" class="text-xs" />Class bookings</a>
+  <section class="rounded-3xl bg-white p-6 shadow-sm ring-1 ring-ink/5">
+    <h2 class="font-serif text-2xl">{edit ? `Edit: ${edit.title}` : 'Add a course'}</h2>
+    <form method="post" class="mt-5 grid gap-4 sm:grid-cols-2">
+      {edit && <input type="hidden" name="id" value={edit.id} />}
+      <label class="text-sm sm:col-span-2">Title<input class="form-control mt-1" name="title" required maxlength="200" value={edit?.title ?? ''} /></label>
+      <label class="text-sm">Hourly rate (KES)<input class="form-control mt-1" name="hourly_rate" inputmode="decimal" required value={centsToInput(edit?.hourlyRateCents)} /></label>
+      <label class="text-sm">Display order<input class="form-control mt-1" name="sort_order" type="number" value={edit?.sortOrder ?? courses.length + 1} /></label>
+      <label class="text-sm">Track<select class="form-control mt-1" name="track">{TRAINING_TRACKS.map((key) => <option value={key} selected={edit?.track === key}>{tracks[key].label}</option>)}</select></label>
+      <label class="text-sm">Level<select class="form-control mt-1" name="level">{LEVELS.map((key) => <option value={key} selected={edit?.level === key}>{LEVEL_LABELS[key]}</option>)}</select></label>
+      <label class="text-sm sm:col-span-2">Summary (one or two sentences)<textarea class="form-control mt-1" name="summary" rows="2" required maxlength="500">{edit?.summary ?? ''}</textarea></label>
+      <label class="text-sm sm:col-span-2">What you’ll learn (one per line, up to 8)<textarea class="form-control mt-1" name="outcomes" rows="4" required maxlength="2000">{edit?.outcomes.join('\n') ?? ''}</textarea></label>
+      <label class="text-sm sm:col-span-2">Who it’s for<textarea class="form-control mt-1" name="who_for" rows="2" required maxlength="500">{edit?.whoFor ?? ''}</textarea></label>
+      <label class="flex items-center gap-2 text-sm"><input type="checkbox" name="is_active" class="h-4 w-4 accent-forest" checked={edit ? edit.isActive : true} />Show on the website</label>
+      <div class="flex gap-4 sm:col-span-2"><button class="btn-primary">{edit ? 'Save changes' : 'Add course'}</button>{edit && <a class="self-center text-sm underline" href="/admin/training/courses">Cancel</a>}</div>
+    </form>
+  </section>
+  <section class="mt-6 overflow-x-auto rounded-3xl bg-white p-6 shadow-sm ring-1 ring-ink/5">
+    <table class="w-full min-w-[640px] text-left text-sm">
+      <thead class="text-xs uppercase tracking-wider text-gray-500"><tr><th class="py-2">Course</th><th>Track</th><th>Level</th><th>Rate</th><th>Status</th><th></th></tr></thead>
+      <tbody>{courses.map((course) => <tr class="border-t border-ink/5"><td class="py-3 font-semibold">{course.title}</td><td>{tracks[course.track].label}</td><td>{LEVEL_LABELS[course.level]}</td><td>{formatMoneyWhole(course.hourlyRateCents)}/h</td><td>{course.isActive ? 'Shown' : 'Hidden'}</td><td class="text-right"><a class="underline" href={`?edit=${course.id}`}>Edit</a></td></tr>)}</tbody>
+    </table>
+  </section>
+</AdminLayout>

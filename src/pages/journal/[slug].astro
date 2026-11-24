@@ -1,0 +1,64 @@
+---
+import Icon from '~/components/Icon.astro';
+import JournalCard from '~/components/JournalCard.astro';
+import YuccaSprig from '~/components/YuccaSprig.astro';
+import BaseLayout from '~/layouts/BaseLayout.astro';
+import { formatLongDate, readMinutes } from '~/lib/format';
+import { journalBodyHtml, journalImage, latestPosts, postBySlug } from '~/lib/journal';
+import { absoluteUrl, breadcrumbJsonLd, BUSINESS_NAME, businessId, metaDescription, siteOrigin } from '~/lib/seo';
+
+const post = await postBySlug(Astro.params.slug ?? '');
+if (!post) return Astro.rewrite('/404');
+const related = await latestPosts(3, post.id);
+const origin = siteOrigin(Astro.url);
+const articleUrl = absoluteUrl(`/journal/${post.slug}`, origin);
+const description = metaDescription(post.excerpt || post.title);
+
+// Each category points readers to the part of the business that helps them act on the article.
+const nextStep = {
+  'fabric-notes': { icon: 'fa6-solid:swatchbook', colour: '#16646E', heading: 'Find your fabric', text: 'Browse bouclé, linen, velvet and more, each shown on real furniture.', label: 'Shop the collection', href: '/shop' },
+  upholstery: { icon: 'fa6-solid:couch', colour: '#1F5B43', heading: 'Give your piece a new life', text: 'Send us a photo and we’ll advise on fabric, padding and a clear quote.', label: 'Explore upholstery services', href: '/services' },
+}[post.categorySlug ?? ''] ?? { icon: 'fa6-solid:compass-drafting', colour: '#A9461E', heading: 'Plan your room with us', text: 'Book a consultation online or in person and leave with clear next steps.', label: 'Book a consultation', href: '/consultations' };
+
+const publisher = { '@type': 'Organization', '@id': businessId(origin), name: BUSINESS_NAME, logo: { '@type': 'ImageObject', url: absoluteUrl('/images/yucca-homeware-logo.jpeg', origin) } };
+const structuredData = [{
+  '@context': 'https://schema.org', '@type': 'BlogPosting', headline: post.title, description, inLanguage: 'en-KE',
+  datePublished: post.publishedAt?.toISOString(), image: absoluteUrl(journalImage(post.image), origin),
+  articleSection: post.categoryName ?? undefined, author: publisher, publisher, mainEntityOfPage: articleUrl,
+}, breadcrumbJsonLd(origin, [['Journal', '/journal'], [post.title, `/journal/${post.slug}`]])];
+---
+<BaseLayout title={`${post.title} | Yucca Homeware`} description={description} image={journalImage(post.image)} imageAlt={post.title} type="article" structuredData={structuredData}>
+  <section class="bg-cream">
+    <div class="mx-auto max-w-3xl px-5 pb-10 pt-10 text-center sm:pt-14">
+      <a class="inline-flex items-center gap-2 text-sm font-medium text-forest" href="/journal"><Icon name="fa6-solid:arrow-left" class="text-xs" />The journal</a>
+      <p class="eyebrow mt-8">{post.categoryName ?? 'Yucca notes'}</p>
+      <h1 class="mt-3 font-serif text-3xl leading-tight sm:text-5xl">{post.title}</h1>
+      {post.excerpt && <p class="mx-auto mt-5 max-w-2xl text-base leading-8 text-gray-600">{post.excerpt}</p>}
+      <p class="mt-6 inline-flex flex-wrap items-center justify-center gap-x-4 gap-y-1 text-xs text-gray-500">
+        {post.publishedAt && <span><Icon name="fa6-regular:calendar" class="mr-1.5 inline" />{formatLongDate(post.publishedAt)}</span>}
+        <span><Icon name="fa6-regular:clock" class="mr-1.5 inline" />{readMinutes(post.body)} min read</span>
+      </p>
+    </div>
+  </section>
+  <article class="mx-auto max-w-4xl px-5">
+    {post.image && <img class="-mt-2 aspect-[16/9] w-full rounded-3xl object-cover shadow-xl" src={post.image} alt="" />}
+    <div class="journal-body mx-auto mt-10 max-w-2xl" set:html={journalBodyHtml(post.body)} />
+    <div class="mx-auto mt-10 flex max-w-2xl flex-wrap items-center gap-3 border-t border-ink/10 pt-6 text-sm">
+      <span class="font-semibold">Share this story</span>
+      <a class="social-share" href={`https://www.facebook.com/sharer/sharer.php?u=${encodeURIComponent(articleUrl)}`} target="_blank" rel="noopener"><Icon name="fa6-brands:facebook-f" />Facebook</a>
+      <a class="social-share" href={`https://wa.me/?text=${encodeURIComponent(`${post.title} ${articleUrl}`)}`} target="_blank" rel="noopener"><Icon name="fa6-brands:whatsapp" />WhatsApp</a>
+    </div>
+    <aside class="relative mx-auto mt-12 flex max-w-2xl flex-col gap-6 overflow-hidden rounded-3xl p-8 text-white sm:flex-row sm:items-center" style={`background-color:${nextStep.colour}`}>
+      <YuccaSprig class="pointer-events-none absolute -bottom-10 -right-8 h-48 w-48 text-white/10" />
+      <span class="relative grid h-14 w-14 shrink-0 place-items-center rounded-2xl bg-white text-xl" style={`color:${nextStep.colour}`}><Icon name={nextStep.icon} /></span>
+      <div class="relative flex-1"><h2 class="font-serif text-2xl">{nextStep.heading}</h2><p class="mt-1 text-sm leading-6 text-white/90">{nextStep.text}</p></div>
+      <a href={nextStep.href} class="relative inline-flex shrink-0 items-center gap-2 rounded-full bg-white px-5 py-2.5 text-sm font-semibold" style={`color:${nextStep.colour}`}>{nextStep.label} <Icon name="fa6-solid:arrow-right" class="text-xs" /></a>
+    </aside>
+  </article>
+  {related.length > 0 && (
+    <section class="mx-auto max-w-7xl px-5 py-20">
+      <div class="flex flex-wrap items-end justify-between gap-4"><div><p class="eyebrow">Keep reading</p><h2 class="mt-3 font-serif text-3xl sm:text-4xl">More from the journal</h2></div><a class="inline-flex items-center gap-2 text-sm font-semibold text-forest" href="/journal">All stories <Icon name="fa6-solid:arrow-right" class="text-xs" /></a></div>
+      <div class="mt-8 grid gap-6 sm:grid-cols-2 lg:grid-cols-3">{related.map((item) => <JournalCard post={item} />)}</div>
+    </section>
+  )}
+</BaseLayout>

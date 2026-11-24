@@ -1,0 +1,76 @@
+---
+import type { BatchItem } from 'drizzle-orm/batch';
+import { desc, eq, inArray } from 'drizzle-orm';
+import StatusBadge from '~/components/StatusBadge.astro';
+import { CONSULTATION_STATUSES } from '~/db/schema';
+import AdminLayout from '~/layouts/AdminLayout.astro';
+import { done, int, text } from '~/lib/admin-form';
+import { constraintFailed, db, runBatch, schema } from '~/lib/db';
+import { emailBody, sendEmail } from '~/lib/email';
+import { formatClock, formatDateTime, formatIsoDate } from '~/lib/format';
+import { statusLabel } from '~/lib/labels';
+
+const c = schema.consultations;
+type Status = (typeof CONSULTATION_STATUSES)[number];
+const RELEASED: Status[] = ['rejected', 'cancelled'];
+
+if (Astro.request.method === 'POST') {
+  const form = await Astro.request.formData();
+  const id = int(form, 'id');
+  const status = text(form, 'status', 20) as Status;
+  const [item] = id ? await db.select().from(c).where(eq(c.id, id)) : [];
+  if (!item || !CONSULTATION_STATUSES.includes(status)) return done(Astro, 'error', 'Choose a consultation and a valid status.');
+  const statements: BatchItem<'sqlite'>[] = [db.update(c).set({ status, adminNotes: text(form, 'admin_notes', 5000) || null }).where(eq(c.id, item.id))];
+  const releasing = RELEASED.includes(status) && !RELEASED.includes(item.status);
+  const reopening = !RELEASED.includes(status) && RELEASED.includes(item.status);
+  if (releasing) statements.push(db.delete(schema.consultationSlots).where(eq(schema.consultationSlots.consultationId, item.id)));
+  // Reopening claims the slot again; the primary key refuses it if someone else has booked that time since.
+  if (reopening) statements.push(db.insert(schema.consultationSlots).values({ date: item.preferredDate, time: item.preferredTime, consultationId: item.id }));
+  try {
+    await runBatch(statements);
+  } catch (error) {
+    if (constraintFailed(error, 'UNIQUE')) return done(Astro, 'error', 'That time has been booked by someone else since. Agree a new time with the customer first.');
+    throw error;
+  }
+  if (status !== item.status) {
+    Astro.locals.cfContext.waitUntil(sendEmail({
+      to: item.email,
+      subject: `Your consultation request: ${statusLabel(status)}`,
+      text: emailBody(`Hello ${item.name},`, `Your ${item.consultationType.toLowerCase()} consultation on ${formatIsoDate(item.preferredDate)} at ${formatClock(item.preferredTime)} is now: ${statusLabel(status)}.`, text(form, 'admin_notes', 5000) || '', 'Reply to this email if you have any questions.'),
+    }));
+  }
+  return done(Astro, 'success', 'Consultation updated.');
+}
+
+const statusFilter = (CONSULTATION_STATUSES as readonly string[]).includes(Astro.url.searchParams.get('status') ?? '') ? Astro.url.searchParams.get('status') as Status : null;
+const rows = await db.select().from(c).where(statusFilter ? eq(c.status, statusFilter) : undefined).orderBy(desc(c.preferredDate), desc(c.preferredTime)).limit(150);
+const images = rows.length ? await db.select().from(schema.consultationImages).where(inArray(schema.consultationImages.consultationId, rows.map((row) => row.id))) : [];
+---
+<AdminLayout title="Consultations" heading="Consultation requests" intro="Approve, reschedule by note, or decline. Rejecting or cancelling frees the slot; the customer is emailed when the status changes.">
+  <nav class="mb-5 flex flex-wrap gap-2" aria-label="Filter by status">
+    <a href="/admin/consultations" class:list={['rounded-full px-4 py-2 text-xs font-semibold', !statusFilter ? 'bg-forest text-white' : 'bg-white ring-1 ring-ink/10']}>All</a>
+    {CONSULTATION_STATUSES.map((s) => <a href={`?status=${s}`} class:list={['rounded-full px-4 py-2 text-xs font-semibold', statusFilter === s ? 'bg-forest text-white' : 'bg-white ring-1 ring-ink/10']}>{statusLabel(s)}</a>)}
+  </nav>
+  <div class="grid gap-4">
+    {rows.length === 0 && <p class="rounded-3xl bg-white p-6 text-sm text-gray-600">No consultations here.</p>}
+    {rows.map((item) => (
+      <article class="grid gap-5 rounded-3xl bg-white p-6 shadow-sm ring-1 ring-ink/5 lg:grid-cols-[1fr_320px]">
+        <div class="text-sm">
+          <div class="flex flex-wrap items-center gap-3"><h2 class="font-serif text-xl">{formatIsoDate(item.preferredDate)} · {formatClock(item.preferredTime)}</h2><StatusBadge status={item.status} /></div>
+          <p class="mt-1 text-gray-600">{item.consultationType} · {item.propertyType} · {statusLabel(item.method)}{item.budget && ` · ${item.budget}`}</p>
+          <p class="mt-3"><strong>{item.name}</strong> · <a class="underline" href={`mailto:${item.email}`}>{item.email}</a> · <a class="underline" href={`tel:${item.phone}`}>{item.phone}</a></p>
+          <p class="text-gray-600">{item.location}</p>
+          <p class="mt-3 whitespace-pre-line leading-6">{item.description}</p>
+          {images.filter((img) => img.consultationId === item.id).map((img) => <a href={img.image} target="_blank" rel="noopener" class="mt-3 inline-block"><img src={img.image} alt="Reference photo from the customer" class="h-24 w-24 rounded-xl object-cover" loading="lazy" /></a>)}
+          <p class="mt-3 text-xs text-gray-500">Requested {formatDateTime(item.createdAt)}</p>
+        </div>
+        <form method="post" class="grid h-fit gap-3 rounded-2xl bg-sand p-4">
+          <input type="hidden" name="id" value={item.id} />
+          <label class="text-sm">Status<select class="form-control mt-1" name="status">{CONSULTATION_STATUSES.map((s) => <option value={s} selected={item.status === s}>{statusLabel(s)}</option>)}</select></label>
+          <label class="text-sm">Note to the customer<textarea class="form-control mt-1" name="admin_notes" rows="3" maxlength="5000">{item.adminNotes ?? ''}</textarea></label>
+          <button class="btn-primary py-2">Save</button>
+        </form>
+      </article>
+    ))}
+  </div>
+</AdminLayout>

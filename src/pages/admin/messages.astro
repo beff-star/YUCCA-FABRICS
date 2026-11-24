@@ -1,0 +1,37 @@
+---
+import { count, desc, eq } from 'drizzle-orm';
+import StatusBadge from '~/components/StatusBadge.astro';
+import AdminLayout from '~/layouts/AdminLayout.astro';
+import { done, int, text } from '~/lib/admin-form';
+import { db, schema } from '~/lib/db';
+import { formatDateTime } from '~/lib/format';
+
+const m = schema.contacts;
+if (Astro.request.method === 'POST') {
+  const form = await Astro.request.formData();
+  const id = int(form, 'id');
+  const status = text(form, 'status', 10);
+  if (id && (status === 'new' || status === 'read' || status === 'replied')) await db.update(m).set({ status }).where(eq(m.id, id));
+  return done(Astro, 'success', 'Message updated.');
+}
+const [messages, [subscribers]] = await db.batch([
+  db.select().from(m).orderBy(desc(m.createdAt)).limit(200),
+  db.select({ n: count() }).from(schema.newsletter).where(eq(schema.newsletter.isActive, true)),
+]);
+---
+<AdminLayout title="Messages" heading="Messages" intro="Contact form messages and group training enquiries. Reply by email, then mark them as replied.">
+  <p class="mb-5 flex flex-wrap items-center gap-3 rounded-3xl bg-white p-4 text-sm shadow-sm ring-1 ring-ink/5">Newsletter subscribers: <strong>{subscribers?.n ?? 0}</strong><a class="btn-secondary py-2" href="/admin/export/newsletter.csv">Download CSV</a></p>
+  <div class="grid gap-3">
+    {messages.length === 0 && <p class="rounded-3xl bg-white p-6 text-sm text-gray-600">No messages yet.</p>}
+    {messages.map((message) => (
+      <details class="rounded-3xl bg-white shadow-sm ring-1 ring-ink/5" open={message.status === 'new'}>
+        <summary class="flex cursor-pointer list-none flex-wrap items-center justify-between gap-3 p-5"><span><strong>{message.subject}</strong><br /><span class="text-xs text-gray-500">{message.name} · {formatDateTime(message.createdAt)}</span></span><StatusBadge status={message.status} /></summary>
+        <div class="border-t border-ink/10 p-5 text-sm">
+          <p class="whitespace-pre-line leading-6">{message.message}</p>
+          <p class="mt-3"><a class="underline" href={`mailto:${message.email}?subject=${encodeURIComponent(`Re: ${message.subject}`)}`}>{message.email}</a>{message.phone && <> · <a class="underline" href={`tel:${message.phone}`}>{message.phone}</a></>}</p>
+          <form method="post" class="mt-4 flex flex-wrap gap-2"><input type="hidden" name="id" value={message.id} />{(['read', 'replied'] as const).filter((s) => s !== message.status).map((s) => <button name="status" value={s} class="btn-secondary py-2">Mark {s}</button>)}</form>
+        </div>
+      </details>
+    ))}
+  </div>
+</AdminLayout>

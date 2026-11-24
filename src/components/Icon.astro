@@ -1,0 +1,9 @@
+---
+// Decorative by default (aria-hidden). Pass `title` when the icon is the only label for its control.
+import { Icon as AstroIcon } from 'astro-icon/components';
+import type { ComponentProps } from 'astro/types';
+
+type Props = ComponentProps<typeof AstroIcon>;
+const props = Astro.props;
+---
+<AstroIcon aria-hidden={props.title ? undefined : 'true'} focusable="false" {...props} />

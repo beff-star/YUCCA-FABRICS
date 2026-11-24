@@ -1,0 +1,59 @@
+---
+import { and, desc, eq, gte, lt, or, sql, type SQL } from 'drizzle-orm';
+import Icon from '~/components/Icon.astro';
+import StatusBadge from '~/components/StatusBadge.astro';
+import { PLATFORM_LABELS } from '~/data/courses';
+import { TRAINING_STATUSES } from '~/db/schema';
+import AdminLayout from '~/layouts/AdminLayout.astro';
+import { contains } from '~/lib/catalogue';
+import { db, schema } from '~/lib/db';
+import { formatDateTime } from '~/lib/format';
+import { statusLabel } from '~/lib/labels';
+import { formatMoney } from '~/lib/money';
+
+const t = schema.trainingBookings;
+const params = Astro.url.searchParams;
+const view = params.get('view') === 'past' ? 'past' : 'upcoming';
+const status = (TRAINING_STATUSES as readonly string[]).includes(params.get('status') ?? '') ? params.get('status')! : '';
+const q = (params.get('q') ?? '').trim().slice(0, 80);
+const now = new Date();
+const conditions: (SQL | undefined)[] = [view === 'upcoming' ? gte(t.startsAt, new Date(now.getTime() - 8 * 3_600_000)) : lt(t.startsAt, now)];
+if (status) conditions.push(eq(t.status, status as (typeof TRAINING_STATUSES)[number]));
+if (q) conditions.push(or(contains(t.reference, q), contains(t.name, q), contains(t.email, q), contains(t.phone, q)));
+const rows = await db.select({ booking: t, title: schema.trainingCourses.title, payment: sql<string | null>`(select status from payments where training_booking_id = ${t.id} order by id desc limit 1)` })
+  .from(t).innerJoin(schema.trainingCourses, eq(schema.trainingCourses.id, t.courseId))
+  .where(and(...conditions)).orderBy(view === 'upcoming' ? t.startsAt : desc(t.startsAt)).limit(200);
+const tab = (key: string, label: string) => ({ key, label, href: `/admin/training?view=${key}` });
+---
+<AdminLayout title="Classes" heading="Virtual classes" intro="Bookings, meeting links and payments. Courses, rates and opening hours are managed from the links on the right.">
+  <div class="flex flex-wrap items-center justify-between gap-4">
+    <nav class="flex gap-2" aria-label="Bookings">{[tab('upcoming', 'Upcoming'), tab('past', 'Past')].map((item) => <a href={item.href} class:list={['rounded-full px-4 py-2 text-sm font-semibold', view === item.key ? 'bg-forest text-white' : 'bg-white ring-1 ring-ink/10']} aria-current={view === item.key ? 'page' : undefined}>{item.label}</a>)}</nav>
+    <div class="flex flex-wrap gap-2 text-sm"><a class="btn-secondary py-2" href="/admin/training/courses"><Icon name="fa6-solid:book-open" />Courses &amp; rates</a><a class="btn-secondary py-2" href="/admin/training/availability"><Icon name="fa6-solid:clock" />Opening hours</a><a class="btn-secondary py-2" href="/admin/settings/google"><Icon name="fa6-brands:google" />Google Meet</a></div>
+  </div>
+  <form class="mt-5 flex flex-wrap gap-3 rounded-3xl bg-white p-4 shadow-sm ring-1 ring-ink/5" role="search">
+    <input type="hidden" name="view" value={view} />
+    <label class="sr-only" for="q">Search bookings</label><input id="q" class="form-control max-w-xs" name="q" value={q} placeholder="Reference, name, email or phone" />
+    <label class="sr-only" for="status">Status</label><select id="status" class="form-control max-w-48" name="status"><option value="">Any status</option>{TRAINING_STATUSES.map((s) => <option value={s} selected={status === s}>{statusLabel(s)}</option>)}</select>
+    <button class="btn-primary py-2">Filter</button>
+  </form>
+  <section class="mt-5 overflow-x-auto rounded-3xl bg-white p-5 shadow-sm ring-1 ring-ink/5">
+    {rows.length === 0 ? <p class="text-sm text-gray-600">No bookings match.</p> : (
+      <table class="w-full min-w-[820px] text-left text-sm">
+        <thead class="text-xs uppercase tracking-wider text-gray-500"><tr><th class="py-2">When</th><th>Course</th><th>Customer</th><th>Platform</th><th>Total</th><th>Status</th><th>Payment</th></tr></thead>
+        <tbody>
+          {rows.map(({ booking, title, payment }) => (
+            <tr class="border-t border-ink/5 align-top">
+              <td class="py-3"><a class="font-semibold underline" href={`/admin/training/${booking.reference}`}>{formatDateTime(booking.startsAt)}</a><br /><span class="text-xs text-gray-500">{booking.reference} · {booking.hours} h</span></td>
+              <td class="py-3">{title}</td>
+              <td class="py-3">{booking.name}<br /><span class="text-xs text-gray-500">{booking.phone}</span></td>
+              <td class="py-3">{PLATFORM_LABELS[booking.platform]}{booking.status === 'confirmed' && !booking.meetingUrl && booking.platform !== 'whatsapp' && <span class="mt-1 block text-xs font-semibold text-clay">Link needed</span>}</td>
+              <td class="py-3">{formatMoney(booking.totalCents)}</td>
+              <td class="py-3"><StatusBadge status={booking.status} /></td>
+              <td class="py-3">{payment && <StatusBadge status={payment} />}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    )}
+  </section>
+</AdminLayout>

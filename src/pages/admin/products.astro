@@ -1,0 +1,119 @@
+---
+import { asc, desc, eq } from 'drizzle-orm';
+import { PRODUCT_PLACEHOLDER_IMAGE } from '~/data/fabric-collection';
+import AdminLayout from '~/layouts/AdminLayout.astro';
+import { cents, checked, done, int, optionalText, text } from '~/lib/admin-form';
+import { contains } from '~/lib/catalogue';
+import { constraintFailed, db, schema } from '~/lib/db';
+import { slugify } from '~/lib/format';
+import { centsToInput, formatMoney } from '~/lib/money';
+import { deleteUpload, saveUploadedImage, UploadError } from '~/lib/uploads';
+
+const p = schema.products;
+if (Astro.request.method === 'POST') {
+  const form = await Astro.request.formData();
+  const id = int(form, 'id');
+  const intent = form.get('intent');
+  const [existing] = id ? await db.select().from(p).where(eq(p.id, id)) : [];
+
+  if (intent === 'delete' && existing) {
+    try {
+      await db.delete(p).where(eq(p.id, existing.id));
+    } catch (error) {
+      if (constraintFailed(error)) return done(Astro, 'error', 'This product has reviews or orders linked to it. Hide it instead of deleting.');
+      throw error;
+    }
+    await deleteUpload(existing.image);
+    return done(Astro, 'success', 'Product deleted.', '/admin/products');
+  }
+  if (intent === 'toggle' && existing) {
+    await db.update(p).set({ isActive: !existing.isActive }).where(eq(p.id, existing.id));
+    return done(Astro, 'success', `${existing.name} is now ${existing.isActive ? 'hidden from' : 'shown in'} the shop.`);
+  }
+
+  const name = text(form, 'name', 180);
+  const sku = text(form, 'sku', 80).toUpperCase();
+  const description = text(form, 'description', 5000);
+  const price = cents(form, 'price');
+  const sale = cents(form, 'sale_price');
+  const stock = int(form, 'stock');
+  if (!name || !sku || !description || price === null || stock === null || stock < 0 || (text(form, 'sale_price') && (sale === null || sale >= price))) {
+    return done(Astro, 'error', 'Check the name, SKU, description, price and stock. A sale price must be lower than the price.');
+  }
+  let image: string | null;
+  try {
+    image = await saveUploadedImage(form.get('image') as File | null, 'products');
+  } catch (error) {
+    if (error instanceof UploadError) return done(Astro, 'error', error.message);
+    throw error;
+  }
+  const values = {
+    name, sku, description, priceCents: price, salePriceCents: sale, stock, categoryId: int(form, 'category_id'),
+    unit: text(form, 'unit', 30) || 'metre', colour: optionalText(form, 'colour', 80), material: optionalText(form, 'material', 120),
+    isFeatured: checked(form, 'is_featured'), isActive: checked(form, 'is_active'), ...(image ? { image } : {}),
+  };
+  try {
+    if (existing) await db.update(p).set(values).where(eq(p.id, existing.id));
+    else await db.insert(p).values({ ...values, slug: slugify(name, true) });
+  } catch (error) {
+    await deleteUpload(image);
+    if (constraintFailed(error, 'UNIQUE')) return done(Astro, 'error', 'That SKU is already in use.');
+    throw error;
+  }
+  if (existing && image) await deleteUpload(existing.image);
+  return done(Astro, 'success', existing ? 'Product updated.' : 'Product added.', '/admin/products');
+}
+
+const q = (Astro.url.searchParams.get('q') ?? '').trim().slice(0, 80);
+const [categories, products] = await Promise.all([
+  db.select().from(schema.categories).orderBy(asc(schema.categories.name)),
+  db.select({ product: p, category: schema.categories.name }).from(p).leftJoin(schema.categories, eq(schema.categories.id, p.categoryId))
+    .where(q ? contains(p.name, q) : undefined).orderBy(desc(p.createdAt)),
+]);
+const editId = Number(Astro.url.searchParams.get('edit'));
+const [edit] = editId ? await db.select().from(p).where(eq(p.id, editId)) : [];
+---
+<AdminLayout title="Products" heading="Products" intro="The fabric collection, prices and stock. Hidden products stay in old orders but disappear from the shop.">
+  <section class="rounded-3xl bg-white p-6 shadow-sm ring-1 ring-ink/5" id="product-form">
+    <h2 class="font-serif text-2xl">{edit ? `Edit: ${edit.name}` : 'Add a product'}</h2>
+    <form method="post" enctype="multipart/form-data" class="mt-5 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+      {edit && <input type="hidden" name="id" value={edit.id} />}
+      <label class="text-sm">Product name<input class="form-control mt-1" name="name" required maxlength="180" value={edit?.name ?? ''} /></label>
+      <label class="text-sm">SKU<input class="form-control mt-1 uppercase" name="sku" required maxlength="80" value={edit?.sku ?? ''} /></label>
+      <label class="text-sm">Category<select class="form-control mt-1" name="category_id"><option value="">Uncategorised</option>{categories.map((cat) => <option value={cat.id} selected={edit?.categoryId === cat.id}>{cat.name}</option>)}</select></label>
+      <label class="text-sm">Price (KES)<input class="form-control mt-1" name="price" inputmode="decimal" required value={centsToInput(edit?.priceCents)} /></label>
+      <label class="text-sm">Sale price (optional)<input class="form-control mt-1" name="sale_price" inputmode="decimal" value={centsToInput(edit?.salePriceCents)} /></label>
+      <label class="text-sm">Stock<input class="form-control mt-1" name="stock" type="number" min="0" required value={edit?.stock ?? 0} /></label>
+      <label class="text-sm">Unit<input class="form-control mt-1" name="unit" maxlength="30" value={edit?.unit ?? 'metre'} /></label>
+      <label class="text-sm">Colour<input class="form-control mt-1" name="colour" maxlength="80" value={edit?.colour ?? ''} /></label>
+      <label class="text-sm">Material<input class="form-control mt-1" name="material" maxlength="120" value={edit?.material ?? ''} /></label>
+      <label class="text-sm sm:col-span-2 lg:col-span-3">Description<textarea class="form-control mt-1" name="description" rows="3" required maxlength="5000">{edit?.description ?? ''}</textarea></label>
+      <label class="text-sm">Photo (JPG, PNG or WebP, max 5 MB){edit?.image && ' · leave empty to keep the current one'}<input class="form-control mt-1 text-sm" name="image" type="file" accept="image/jpeg,image/png,image/webp" /></label>
+      <label class="flex items-center gap-2 self-end text-sm"><input type="checkbox" name="is_featured" class="h-4 w-4 accent-forest" checked={edit?.isFeatured ?? false} />Feature on the homepage</label>
+      <label class="flex items-center gap-2 self-end text-sm"><input type="checkbox" name="is_active" class="h-4 w-4 accent-forest" checked={edit?.isActive ?? true} />Show in the shop</label>
+      <div class="flex gap-4 sm:col-span-2 lg:col-span-3"><button class="btn-primary">{edit ? 'Save changes' : 'Add product'}</button>{edit && <a class="self-center text-sm underline" href="/admin/products">Cancel</a>}</div>
+    </form>
+  </section>
+  <section class="mt-6 overflow-x-auto rounded-3xl bg-white p-6 shadow-sm ring-1 ring-ink/5">
+    <form class="mb-4 flex gap-2" role="search"><label class="sr-only" for="q">Search products</label><input id="q" class="form-control max-w-xs" name="q" value={q} placeholder="Search by name" /><button class="btn-secondary py-2">Search</button></form>
+    <table class="w-full min-w-[820px] text-left text-sm">
+      <thead class="text-xs uppercase tracking-wider text-gray-500"><tr><th class="py-2">Product</th><th>Category</th><th>Price</th><th>Stock</th><th>Status</th><th class="text-right">Actions</th></tr></thead>
+      <tbody>
+        {products.map(({ product, category }) => (
+          <tr class="border-t border-ink/5">
+            <td class="py-3"><span class="flex items-center gap-3"><img src={product.image ?? PRODUCT_PLACEHOLDER_IMAGE} alt="" class="h-12 w-12 rounded-lg object-cover object-top" loading="lazy" /><span><strong>{product.name}</strong><br /><span class="text-xs text-gray-500">{product.sku}</span></span></span></td>
+            <td>{category ?? '—'}</td>
+            <td>{product.salePriceCents !== null ? <><span class="text-clay">{formatMoney(product.salePriceCents)}</span> <s class="text-xs text-gray-500">{formatMoney(product.priceCents)}</s></> : formatMoney(product.priceCents)}</td>
+            <td class:list={[{ 'font-semibold text-clay': product.stock <= 5 }]}>{product.stock}</td>
+            <td>{product.isActive ? 'Shown' : 'Hidden'}{product.isFeatured && ' · Featured'}</td>
+            <td class="py-3"><span class="flex justify-end gap-3">
+              <a class="underline" href={`?edit=${product.id}#product-form`}>Edit</a>
+              <form method="post"><input type="hidden" name="intent" value="toggle" /><input type="hidden" name="id" value={product.id} /><button class="underline">{product.isActive ? 'Hide' : 'Show'}</button></form>
+              <form method="post" data-confirm={`Delete ${product.name}? This can’t be undone.`}><input type="hidden" name="intent" value="delete" /><input type="hidden" name="id" value={product.id} /><button class="text-[#7A2E22] underline">Delete</button></form>
+            </span></td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  </section>
+</AdminLayout>

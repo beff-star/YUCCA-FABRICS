@@ -1,0 +1,90 @@
+---
+import { and, count, desc, eq, gte, inArray, ne, sql, sum } from 'drizzle-orm';
+import Icon from '~/components/Icon.astro';
+import StatusBadge from '~/components/StatusBadge.astro';
+import AdminLayout from '~/layouts/AdminLayout.astro';
+import { db, schema } from '~/lib/db';
+import { formatDate, formatDateTime, todayInNairobi } from '~/lib/format';
+import { formatMoney, formatMoneyWhole } from '~/lib/money';
+
+const o = schema.orders;
+const t = schema.trainingBookings;
+const p = schema.payments;
+const sixMonthsAgo = new Date(Date.now() - 183 * 86_400_000);
+const month = sql<string>`strftime('%Y-%m', ${p.updatedAt} / 1000, 'unixepoch', '+3 hours')`;
+const [[customers], [products], [orders], [revenue], [pending], [requests], [consults], [classes], monthly, top, latest, nextClasses] = await db.batch([
+  db.select({ n: count() }).from(schema.user).where(eq(schema.user.role, 'customer')),
+  db.select({ n: count() }).from(schema.products).where(eq(schema.products.isActive, true)),
+  db.select({ n: count() }).from(o),
+  db.select({ total: sum(p.amountCents) }).from(p).where(eq(p.status, 'paid')),
+  db.select({ n: count() }).from(o).where(eq(o.status, 'pending')),
+  db.select({ n: count() }).from(schema.serviceRequests).where(inArray(schema.serviceRequests.status, ['new', 'quoted'])),
+  db.select({ n: count() }).from(schema.consultations).where(and(inArray(schema.consultations.status, ['pending', 'approved']), gte(schema.consultations.preferredDate, todayInNairobi()))),
+  db.select({ n: count() }).from(t).where(and(eq(t.status, 'confirmed'), gte(t.startsAt, new Date()))),
+  db.select({ month, orders: sql<number>`sum(case when ${p.orderId} is not null then ${p.amountCents} else 0 end)`, classes: sql<number>`sum(case when ${p.trainingBookingId} is not null then ${p.amountCents} else 0 end)` })
+    .from(p).where(and(eq(p.status, 'paid'), gte(p.updatedAt, sixMonthsAgo))).groupBy(month).orderBy(month),
+  db.select({ name: schema.orderItems.productName, qty: sql<number>`sum(${schema.orderItems.quantity})` }).from(schema.orderItems)
+    .innerJoin(o, eq(o.id, schema.orderItems.orderId)).where(ne(o.status, 'cancelled')).groupBy(schema.orderItems.productName).orderBy(desc(sql`2`)).limit(5),
+  db.select().from(o).orderBy(desc(o.createdAt)).limit(6),
+  db.select({ booking: t, title: schema.trainingCourses.title }).from(t).innerJoin(schema.trainingCourses, eq(schema.trainingCourses.id, t.courseId))
+    .where(and(eq(t.status, 'confirmed'), gte(t.startsAt, new Date()))).orderBy(t.startsAt).limit(5),
+]);
+const tiles = [
+  ['fa6-solid:wallet', 'Paid revenue', formatMoneyWhole(Number(revenue?.total ?? 0)), '/admin/reports'],
+  ['fa6-solid:bag-shopping', 'Orders', String(orders?.n ?? 0), '/admin/orders'],
+  ['fa6-solid:hourglass-half', 'Pending orders', String(pending?.n ?? 0), '/admin/orders?status=pending'],
+  ['fa6-solid:chalkboard-user', 'Upcoming classes', String(classes?.n ?? 0), '/admin/training'],
+  ['fa6-solid:calendar-check', 'Upcoming consultations', String(consults?.n ?? 0), '/admin/consultations'],
+  ['fa6-solid:couch', 'Open service requests', String(requests?.n ?? 0), '/admin/requests'],
+  ['fa6-solid:users', 'Customers', String(customers?.n ?? 0), '/admin/customers'],
+  ['fa6-solid:swatchbook', 'Active products', String(products?.n ?? 0), '/admin/products'],
+];
+const peak = Math.max(1, ...monthly.map((m) => Number(m.orders) + Number(m.classes)));
+const monthLabel = (ym: string) => new Date(`${ym}-15T12:00:00Z`).toLocaleDateString('en-GB', { month: 'short' });
+---
+<AdminLayout title="Overview" heading="Studio overview" intro="Today’s numbers at a glance. Paid revenue counts payments marked paid (M-Pesa confirmed or set by staff).">
+  <div class="grid grid-cols-2 gap-4 lg:grid-cols-4">
+    {tiles.map(([icon, label, value, href]) => <a href={href} class="rounded-3xl bg-white p-5 shadow-sm ring-1 ring-ink/5 transition hover:shadow-lg"><Icon name={icon!} class="text-xl text-sage" /><p class="mt-3 font-serif text-2xl sm:text-3xl">{value}</p><p class="mt-1 text-xs uppercase tracking-[.14em] text-gray-500">{label}</p></a>)}
+  </div>
+
+  <div class="mt-8 grid gap-6 xl:grid-cols-[1.3fr_.7fr]">
+    <section class="rounded-3xl bg-white p-6 shadow-sm ring-1 ring-ink/5">
+      <h2 class="font-serif text-2xl">Paid revenue, last 6 months</h2>
+      {monthly.length === 0 ? <p class="mt-4 text-sm text-gray-600">No paid payments yet.</p> : (
+        <>
+          <div class="mt-6 flex h-48 items-end gap-4" role="img" aria-label={monthly.map((m) => `${monthLabel(m.month)}: orders ${formatMoneyWhole(Number(m.orders))}, classes ${formatMoneyWhole(Number(m.classes))}`).join('; ')}>
+            {monthly.map((m) => (
+              <div class="flex flex-1 flex-col items-center gap-2">
+                <div class="flex w-full max-w-14 flex-col justify-end overflow-hidden rounded-t-xl" style={`height:${Math.max(4, ((Number(m.orders) + Number(m.classes)) / peak) * 160)}px`}>
+                  <span class="block bg-clay" style={`flex:${Number(m.classes)}`}></span><span class="block bg-forest" style={`flex:${Number(m.orders)}`}></span>
+                </div>
+                <span class="text-xs text-gray-500">{monthLabel(m.month)}</span>
+              </div>
+            ))}
+          </div>
+          <p class="mt-4 flex gap-4 text-xs text-gray-600"><span class="inline-flex items-center gap-1.5"><span class="h-2.5 w-2.5 rounded-sm bg-forest"></span>Orders</span><span class="inline-flex items-center gap-1.5"><span class="h-2.5 w-2.5 rounded-sm bg-clay"></span>Classes</span></p>
+        </>
+      )}
+    </section>
+    <section class="rounded-3xl bg-white p-6 shadow-sm ring-1 ring-ink/5">
+      <h2 class="font-serif text-2xl">Next classes</h2>
+      {nextClasses.length === 0 ? <p class="mt-4 text-sm text-gray-600">No confirmed classes coming up.</p> : (
+        <ul class="mt-4 grid gap-3">{nextClasses.map(({ booking, title }) => <li><a href={`/admin/training/${booking.reference}`} class="block rounded-2xl bg-sand p-4 transition hover:bg-cream"><span class="block font-semibold">{title}</span><span class="text-xs text-gray-600">{formatDateTime(booking.startsAt)} · {booking.name}</span>{!booking.meetingUrl && booking.platform !== 'whatsapp' && <span class="mt-1 block text-xs font-semibold text-clay">Meeting link needed</span>}</a></li>)}</ul>
+      )}
+    </section>
+  </div>
+
+  <div class="mt-6 grid gap-6 xl:grid-cols-[1.3fr_.7fr]">
+    <section class="overflow-x-auto rounded-3xl bg-white p-6 shadow-sm ring-1 ring-ink/5">
+      <div class="flex items-center justify-between"><h2 class="font-serif text-2xl">Latest orders</h2><a href="/admin/orders" class="text-sm font-semibold text-forest">All orders</a></div>
+      <table class="mt-4 w-full min-w-[560px] text-left text-sm">
+        <thead class="text-xs uppercase tracking-wider text-gray-500"><tr><th class="py-2">Order</th><th>Customer</th><th>Total</th><th>Status</th><th>Payment</th></tr></thead>
+        <tbody>{latest.map((order) => <tr class="border-t border-ink/5"><td class="py-3"><a class="font-semibold underline" href={`/admin/orders?q=${order.orderNumber}`}>{order.orderNumber}</a><br /><span class="text-xs text-gray-500">{formatDate(order.createdAt)}</span></td><td>{order.customerName}</td><td>{formatMoney(order.totalCents)}</td><td><StatusBadge status={order.status} /></td><td><StatusBadge status={order.paymentStatus} /></td></tr>)}</tbody>
+      </table>
+    </section>
+    <section class="rounded-3xl bg-white p-6 shadow-sm ring-1 ring-ink/5">
+      <h2 class="font-serif text-2xl">Top fabrics</h2>
+      {top.length === 0 ? <p class="mt-4 text-sm text-gray-600">No sales yet.</p> : <ol class="mt-4 grid gap-2 text-sm">{top.map((item, index) => <li class="flex justify-between gap-3 rounded-xl bg-sand px-4 py-3"><span>{index + 1}. {item.name}</span><strong>{item.qty} m</strong></li>)}</ol>}
+    </section>
+  </div>
+</AdminLayout>

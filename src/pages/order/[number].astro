@@ -1,0 +1,68 @@
+---
+import { actions } from 'astro:actions';
+import CheckoutSteps from '~/components/CheckoutSteps.astro';
+import FormResult from '~/components/FormResult.astro';
+import Icon from '~/components/Icon.astro';
+import MpesaPanel from '~/components/MpesaPanel.astro';
+import OrderItems from '~/components/OrderItems.astro';
+import StatusBadge from '~/components/StatusBadge.astro';
+import YuccaSprig from '~/components/YuccaSprig.astro';
+import BaseLayout from '~/layouts/BaseLayout.astro';
+import { canAccess } from '~/lib/access';
+import { paymentMethodLabel } from '~/lib/labels';
+import { orderWithItems } from '~/lib/orders';
+import { getSettings, setting } from '~/lib/settings';
+
+const data = await orderWithItems(Astro.params.number ?? '');
+if (!data || !(await canAccess({ reference: data.order.orderNumber, userId: data.order.userId, accessTokenHash: data.order.accessTokenHash }, Astro.locals, Astro.cookies, Astro.url.searchParams.get('t')))) {
+  return Astro.rewrite('/404');
+}
+const { order } = data;
+const settings = await getSettings(Astro.locals);
+const awaitingPayment = order.status !== 'cancelled' && order.paymentStatus !== 'paid' && order.paymentStatus !== 'refunded';
+const nextSteps = [
+  ['fa6-solid:clipboard-check', 'We confirm', 'We check your order and stock, and confirm delivery timing with you.'],
+  ['fa6-solid:scissors', 'We prepare', 'Your fabric is measured, cut and packed with care.'],
+  ['fa6-solid:truck-fast', 'We deliver', 'Your order is brought to your door, and we keep you posted along the way.'],
+];
+---
+<BaseLayout title={`Order ${order.orderNumber} | Yucca Homeware`} noindex>
+  <section class="relative overflow-hidden bg-cream">
+    <YuccaSprig class="pointer-events-none absolute -right-10 -top-10 hidden h-60 w-60 text-olive/10 sm:block" />
+    <div class="relative mx-auto max-w-3xl px-5 py-12 text-center">
+      <span class="mx-auto grid h-16 w-16 place-items-center rounded-full bg-forest text-2xl text-white shadow-lg"><Icon name="fa6-solid:check" /></span>
+      <p class="eyebrow mt-6">Thank you</p>
+      <h1 class="mt-2 font-serif text-3xl sm:text-4xl">Your order is in good hands.</h1>
+      <p class="mt-3 text-sm text-gray-600">Order <strong class="text-ink">{order.orderNumber}</strong>. A confirmation has been sent to {order.email}.</p>
+      <div class="flex justify-center"><CheckoutSteps current={3} /></div>
+    </div>
+  </section>
+  <section class="mx-auto grid max-w-3xl gap-6 px-5 py-10">
+    {awaitingPayment && order.paymentMethod === 'mpesa' && <MpesaPanel reference={order.orderNumber} amountCents={order.totalCents} phone={order.phone} status={order.paymentStatus} />}
+    {awaitingPayment && order.paymentMethod === 'bank_transfer' && (
+      <div class="rounded-3xl bg-white p-6 shadow-sm ring-1 ring-ink/5 sm:p-8">
+        <h2 class="flex items-center gap-3 font-serif text-2xl"><Icon name="fa6-solid:building-columns" class="text-sage" />Bank transfer details</h2>
+        <p class="mt-3 whitespace-pre-line text-sm leading-6 text-gray-600">{setting(settings, 'bank_details', 'Please contact us for current bank transfer details.')}</p>
+        <p class="mt-2 text-xs text-gray-500">Use <strong>{order.orderNumber}</strong> as the payment reference. The transfer is verified before your order is marked paid.</p>
+        <FormResult action={actions.bankReference} class="mt-4" />
+        <form data-ajax-form="bankReference" action={actions.bankReference} method="post" class="mt-4 flex flex-wrap gap-2">
+          <input type="hidden" name="reference" value={order.orderNumber} />
+          <label class="sr-only" for="transfer-reference">Bank transfer reference</label>
+          <input id="transfer-reference" name="transfer_reference" class="form-control max-w-sm flex-1" placeholder="Your bank’s transaction reference" maxlength="80" required />
+          <button class="btn-primary">Submit reference</button>
+        </form>
+      </div>
+    )}
+    <div class="rounded-3xl bg-white p-6 shadow-sm ring-1 ring-ink/5 sm:p-8">
+      <div class="flex flex-wrap items-center justify-between gap-3"><h2 class="font-serif text-2xl">Order details</h2><span class="flex flex-wrap items-center gap-2 text-sm text-gray-600">{paymentMethodLabel(order.paymentMethod)} <StatusBadge status={order.paymentStatus} /></span></div>
+      <OrderItems data={data} />
+    </div>
+    <div>
+      <h2 class="mt-6 text-center font-serif text-2xl">What happens next</h2>
+      <ol class="mt-6 grid gap-4 sm:grid-cols-3">{nextSteps.map(([icon, title, text], index) => <li class="rounded-3xl bg-white p-6 text-center shadow-sm ring-1 ring-ink/5"><span class="mx-auto grid h-12 w-12 place-items-center rounded-full bg-cream text-lg text-forest"><Icon name={icon!} /></span><h3 class="mt-4 font-semibold">{index + 1}. {title}</h3><p class="mt-2 text-sm leading-6 text-gray-600">{text}</p></li>)}</ol>
+    </div>
+    <div class="mt-4 flex flex-wrap justify-center gap-3">
+      {order.userId && Astro.locals.user?.id === order.userId ? <><a class="btn-primary" href="/account/orders">View my orders</a><a class="btn-secondary" href="/shop">Continue shopping</a></> : <a class="btn-primary" href="/shop">Continue shopping</a>}
+    </div>
+  </section>
+</BaseLayout>

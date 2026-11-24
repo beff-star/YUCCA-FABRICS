@@ -1,0 +1,15 @@
+---
+import BaseLayout from '~/layouts/BaseLayout.astro';
+Astro.response.status = 403;
+---
+<BaseLayout title="No access | Yucca Homeware" noindex>
+  <section class="mx-auto max-w-2xl px-5 py-24 text-center">
+    <p class="eyebrow">Error 403</p>
+    <h1 class="mt-3 font-serif text-4xl sm:text-5xl">This area is for staff</h1>
+    <p class="mt-5 leading-7 text-gray-600">Your account doesn’t have access to this page. If you think it should, ask the site administrator.</p>
+    <div class="mt-8 flex flex-wrap justify-center gap-3">
+      <a href="/account" class="btn-primary">My account</a>
+      <a href="/" class="btn-secondary">Back home</a>
+    </div>
+  </section>
+</BaseLayout>

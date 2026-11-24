@@ -1,0 +1,42 @@
+---
+import { and, asc, eq, lte } from 'drizzle-orm';
+import AdminLayout from '~/layouts/AdminLayout.astro';
+import { db, schema } from '~/lib/db';
+import { formatIsoDate } from '~/lib/format';
+import { formatMoney } from '~/lib/money';
+import { dailyReport, reportRange } from '~/lib/reports';
+
+const { from, to } = reportRange(Astro.url.searchParams);
+const [rows, lowStock] = await Promise.all([
+  dailyReport(from, to),
+  db.select().from(schema.products).where(and(eq(schema.products.isActive, true), lte(schema.products.stock, 5))).orderBy(asc(schema.products.stock)),
+]);
+const totals = rows.reduce((t, r) => ({ orders: t.orders + r.orders, paid: t.paid + r.paid, pending: t.pending + r.pending, classes: t.classes + r.classes }), { orders: 0, paid: 0, pending: 0, classes: 0 });
+---
+<AdminLayout title="Reports" heading="Reports" intro="Orders and paid revenue per day (Nairobi time), class revenue, and fabrics running low.">
+  <form class="flex flex-wrap items-end gap-3 rounded-3xl bg-white p-4 shadow-sm ring-1 ring-ink/5">
+    <label class="text-sm">From<input class="form-control mt-1" type="date" name="from" value={from} /></label>
+    <label class="text-sm">To<input class="form-control mt-1" type="date" name="to" value={to} /></label>
+    <button class="btn-primary py-3">Show</button>
+    <a class="btn-secondary py-3" href={`/admin/export/report.csv?from=${from}&to=${to}`}>Download CSV</a>
+  </form>
+  <div class="mt-5 grid grid-cols-2 gap-4 lg:grid-cols-4">
+    {[['Orders', String(totals.orders)], ['Paid order revenue', formatMoney(totals.paid)], ['Paid class revenue', formatMoney(totals.classes)], ['Orders still pending', String(totals.pending)]].map(([label, value]) => <div class="rounded-3xl bg-white p-5 shadow-sm ring-1 ring-ink/5"><p class="font-serif text-2xl">{value}</p><p class="mt-1 text-xs uppercase tracking-[.14em] text-gray-500">{label}</p></div>)}
+  </div>
+  <div class="mt-6 grid gap-6 xl:grid-cols-[1.3fr_.7fr]">
+    <section class="overflow-x-auto rounded-3xl bg-white p-6 shadow-sm ring-1 ring-ink/5">
+      <h2 class="font-serif text-2xl">{formatIsoDate(from)} – {formatIsoDate(to)}</h2>
+      {rows.length === 0 ? <p class="mt-4 text-sm text-gray-600">No activity in this range.</p> : (
+        <table class="mt-4 w-full min-w-[520px] text-left text-sm">
+          <thead class="text-xs uppercase tracking-wider text-gray-500"><tr><th class="py-2">Date</th><th>Orders</th><th>Paid orders</th><th>Paid classes</th><th>Pending</th></tr></thead>
+          <tbody>{rows.map((row) => <tr class="border-t border-ink/5"><td class="py-2">{formatIsoDate(row.day)}</td><td>{row.orders}</td><td>{formatMoney(row.paid)}</td><td>{formatMoney(row.classes)}</td><td>{row.pending}</td></tr>)}</tbody>
+        </table>
+      )}
+    </section>
+    <section class="rounded-3xl bg-white p-6 shadow-sm ring-1 ring-ink/5">
+      <h2 class="font-serif text-2xl">Low stock</h2>
+      <p class="mt-1 text-xs text-gray-500">Active fabrics with 5 or fewer left.</p>
+      {lowStock.length === 0 ? <p class="mt-4 text-sm text-gray-600">Everything is well stocked.</p> : <ul class="mt-4 grid gap-2 text-sm">{lowStock.map((product) => <li class="flex justify-between gap-3 rounded-xl bg-sand px-4 py-2"><a class="underline" href={`/admin/products?edit=${product.id}#product-form`}>{product.name}</a><strong class:list={[{ 'text-[#7A2E22]': product.stock === 0 }]}>{product.stock}</strong></li>)}</ul>}
+    </section>
+  </div>
+</AdminLayout>

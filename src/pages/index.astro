@@ -1,0 +1,218 @@
+---
+import { desc, eq, min } from 'drizzle-orm';
+import Icon from '~/components/Icon.astro';
+import JournalCard from '~/components/JournalCard.astro';
+import ProductCard from '~/components/ProductCard.astro';
+import YuccaSprig from '~/components/YuccaSprig.astro';
+import { tracks } from '~/data/courses';
+import { fabricCollection, fabricImage } from '~/data/fabric-collection';
+import { serviceDetails } from '~/data/service-details';
+import BaseLayout from '~/layouts/BaseLayout.astro';
+import { activeCategories, bestSellers, featuredProducts, latestProducts } from '~/lib/catalogue';
+import { db, schema } from '~/lib/db';
+import { latestPosts } from '~/lib/journal';
+import { formatMoneyWhole } from '~/lib/money';
+import { businessJsonLd, siteOrigin, websiteJsonLd } from '~/lib/seo';
+import { activeServices } from '~/lib/services';
+import { getSettings, siteNumbers } from '~/lib/settings';
+
+const featured = await featuredProducts(4);
+const [categories, favourites, latest, services, testimonials, galleryPreview, posts, [rate]] = await Promise.all([
+  activeCategories().then((rows) => rows.slice(0, 6)),
+  bestSellers(4),
+  latestProducts(featured.map((p) => p.id), 4),
+  activeServices().then((rows) => rows.slice(0, 3)),
+  db.select().from(schema.testimonials).where(eq(schema.testimonials.isActive, true)).orderBy(desc(schema.testimonials.createdAt)).limit(2),
+  db.select().from(schema.gallery).where(eq(schema.gallery.isActive, true)).orderBy(desc(schema.gallery.createdAt)).limit(3),
+  latestPosts(3),
+  db.select({ cents: min(schema.trainingCourses.hourlyRateCents) }).from(schema.trainingCourses).where(eq(schema.trainingCourses.isActive, true)),
+]);
+const settings = await getSettings(Astro.locals);
+const numbers = await siteNumbers(settings);
+const categoryImages = ['koya-linen.jpeg', 'karla-linen.jpeg', 'harmony-linen.jpeg', 'coco-boucle.jpeg', 'bella-fur.jpeg', 'verola-linen.jpeg'];
+const heroSlides = [
+  { image: '/images/hero/neutral-living-room.jpg', alt: 'Bright living room with a cream sectional sofa, woven pouffe and textured cushions' },
+  { image: '/images/hero/dark-panelled-bedroom.jpg', alt: 'Bedroom with dark panelled walls, heavy linen curtains and a tufted bench' },
+  { image: '/images/hero/leather-sofa-living-room.jpg', alt: 'Sunlit living room with a tan leather sofa, white armchairs and patterned cushions' },
+];
+const origin = siteOrigin(Astro.url);
+const structuredData = [businessJsonLd(settings, origin), websiteJsonLd(origin)];
+---
+<BaseLayout structuredData={structuredData}>
+  <section class="relative min-h-[600px] overflow-hidden bg-night text-white sm:min-h-[650px]">
+    {heroSlides.map((slide, index) => (
+      <div data-hero-slide class:list={['absolute inset-0 transition-opacity duration-1000', index === 0 ? 'opacity-100' : 'opacity-0']} aria-hidden={index === 0 ? undefined : 'true'}>
+        <img src={slide.image} alt={slide.alt} class="h-full w-full object-cover" width="1920" height="1080" loading={index === 0 ? 'eager' : 'lazy'} fetchpriority={index === 0 ? 'high' : undefined} />
+      </div>
+    ))}
+    <!-- Darker on the text side (and all over on phones, where text spans the width) so white text stays readable on light photos. -->
+    <div class="absolute inset-0 bg-night/70 sm:bg-transparent sm:bg-gradient-to-r sm:from-night/90 sm:via-night/60 sm:to-night/10"></div>
+    <div class="relative mx-auto flex min-h-[600px] max-w-7xl items-center px-6 pb-28 pt-20 sm:min-h-[650px] sm:py-24">
+      <div class="max-w-2xl">
+        <p class="mb-6 text-xs uppercase tracking-[.3em] text-wheat">Fabrics · Upholstery · Interiors · Nairobi</p>
+        <h1 class="font-serif text-5xl leading-[1.08] sm:text-7xl">A softer place<br />to land.</h1>
+        <p class="mt-6 max-w-lg text-base leading-7 text-white/85">Upholstery fabrics, skilled reupholstery and interior design from our Nairobi studio, delivered across Kenya. Find your fabric, let us help you imagine what’s possible, or learn the craft yourself.</p>
+        <div class="mt-9 flex flex-wrap gap-3">
+          <a href="/shop" class="rounded-full bg-white px-6 py-3 text-sm font-semibold text-forest transition hover:bg-sand">Explore fabrics</a>
+          <a href="/services" class="rounded-full border border-white/70 px-6 py-3 text-sm font-semibold text-white hover:bg-white/10">Discover our services</a>
+        </div>
+      </div>
+    </div>
+    <div class="absolute bottom-6 right-6 flex items-center gap-3 text-xs text-white">
+      <button type="button" data-hero-prev aria-label="Previous photo" class="rounded-full border border-white/60 bg-night/30 px-3 py-2 hover:bg-white/10">←</button>
+      <span data-hero-count aria-live="polite">01 / 03</span>
+      <button type="button" data-hero-next aria-label="Next photo" class="rounded-full border border-white/60 bg-night/30 px-3 py-2 hover:bg-white/10">→</button>
+      <button type="button" data-hero-toggle aria-pressed="false" class="rounded-full border border-white/60 bg-night/30 px-3 py-2 hover:bg-white/10">Pause</button>
+    </div>
+  </section>
+
+  {categories.length > 0 && (
+    <section class="mx-auto max-w-7xl px-6 py-10">
+      <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        {categories.map((category, index) => (
+          <a href={`/shop?category=${category.id}`} class="group relative min-h-56 overflow-hidden rounded-lg bg-forest">
+            <img class:list={['absolute inset-0 h-full w-full object-cover transition duration-700 group-hover:scale-105', { 'object-top': !category.image }]} src={category.image ?? fabricImage(categoryImages[index % categoryImages.length]!)} alt="" loading="lazy" />
+            <span class="absolute inset-0 bg-gradient-to-t from-black/75 to-transparent"></span>
+            <span class="absolute bottom-5 left-5 text-white"><span class="block font-serif text-2xl">{category.name}</span><span class="mt-1 block text-xs text-white/85">Discover the collection →</span></span>
+          </a>
+        ))}
+      </div>
+    </section>
+  )}
+
+  <section class="bg-white py-20">
+    <div class="mx-auto max-w-7xl px-6">
+      <div class="flex items-end justify-between"><div><p class="eyebrow">The fabric edit</p><h2 class="mt-3 font-serif text-4xl">Chosen to be lived in</h2></div><a href="/shop" class="hidden text-sm font-semibold text-forest md:block">View all fabrics →</a></div>
+      <div class="mt-9 grid grid-cols-2 gap-3 sm:gap-5 lg:grid-cols-4">{featured.map((product) => <ProductCard product={product} />)}</div>
+      {featured.length === 0 && <p class="mt-8 text-sm text-gray-600">Our next fabric collection is being prepared. <a class="underline" href="/contact">Ask us what’s available.</a></p>}
+      <a href="/shop" class="mt-8 inline-block text-sm font-semibold text-forest md:hidden">View all fabrics →</a>
+    </div>
+  </section>
+
+  <section class="mx-auto max-w-7xl px-6 py-16">
+    <div class="flex flex-wrap items-end justify-between gap-4"><div><p class="eyebrow">The fabric lookbook</p><h2 class="mt-3 font-serif text-4xl">Textures to fall for</h2></div><a href="/gallery#fabric-lookbook" class="text-sm underline">See all {fabricCollection.length} fabrics</a></div>
+    <div class="mt-8 grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-6">
+      {fabricCollection.slice(0, 6).map((fabric) => (
+        <a href="/gallery#fabric-lookbook" class="group block">
+          <span class="block overflow-hidden bg-white"><img class="aspect-[2/3] w-full object-cover motion-safe:transition motion-safe:duration-500 motion-safe:group-hover:scale-105" src={fabricImage(fabric.image)} alt={`${fabric.name} ${fabric.type} fabric shown on upholstered furniture`} width="736" height="1104" loading="lazy" /></span>
+          <span class="mt-3 block font-serif text-lg">{fabric.name}</span><span class="block text-[10px] uppercase tracking-widest text-gray-500">{fabric.type}</span>
+        </a>
+      ))}
+    </div>
+  </section>
+
+  {favourites.length > 0 && (
+    <section class="bg-cream py-16"><div class="mx-auto max-w-7xl px-6"><p class="eyebrow">Loved by our customers</p><h2 class="mt-3 font-serif text-4xl">The favourites</h2><div class="mt-8 grid grid-cols-2 gap-3 sm:gap-5 lg:grid-cols-4">{favourites.map((product) => <ProductCard product={product} />)}</div></div></section>
+  )}
+
+  {latest.length > 0 && (
+    <section class="mx-auto max-w-7xl px-6 py-16"><div class="flex items-end justify-between"><div><p class="eyebrow">Fresh from the collection</p><h2 class="mt-3 font-serif text-4xl">Just arrived</h2></div><a href="/shop?sort=newest" class="text-sm underline">Shop new fabrics</a></div><div class="mt-8 grid grid-cols-2 gap-3 sm:gap-5 lg:grid-cols-4">{latest.map((product) => <ProductCard product={product} />)}</div></section>
+  )}
+
+  <section class="mx-auto grid max-w-7xl gap-10 px-6 py-20 lg:grid-cols-2 lg:items-center">
+    <div class="relative"><img class="aspect-[5/4] w-full object-cover object-top" loading="lazy" src={fabricImage('lenen-linen.jpeg')} alt="Burnt-orange Lenen linen on a sofa and armchair in a warm living room" /><div class="absolute -bottom-5 -right-4 hidden bg-clay px-7 py-5 font-serif text-xl text-white sm:block">Made with care,<br />made for you.</div></div>
+    <div class="lg:pl-12"><p class="eyebrow">A thoughtful approach</p><h2 class="mt-4 font-serif text-4xl leading-tight">From the first swatch<br />to the final stitch.</h2><p class="mt-5 text-sm leading-7 text-gray-600">A home is never just a room. It’s the familiar chair, the light through the curtains, and the textures that make you want to stay. We bring practical expertise and a curious eye to every project.</p><a href="/consultations" class="mt-7 inline-block rounded-full bg-forest px-6 py-3 text-sm font-semibold text-white">Let’s talk about your space</a></div>
+  </section>
+
+  <section class="bg-cream py-20">
+    <div class="mx-auto max-w-7xl px-6">
+      <div class="max-w-xl"><p class="eyebrow">How we can help</p><h2 class="mt-3 font-serif text-4xl">A little more lovely,<br />a little more you.</h2></div>
+      <div class="mt-10 grid gap-5 md:grid-cols-3">
+        {services.map((service) => {
+          const details = serviceDetails(service.slug);
+          return (
+            <a href="/services#services" class="group rounded-3xl bg-white p-7 shadow-sm ring-1 ring-ink/5 transition motion-safe:hover:-translate-y-1 hover:shadow-lg">
+              <span class:list={['grid h-14 w-14 place-items-center rounded-2xl text-xl', details.theme.text === 'light' ? 'text-white' : 'text-ink']} style={`background-color:${details.theme.bg}`}><Icon name={details.icon} /></span>
+              <h3 class="mt-6 font-serif text-2xl">{service.name}</h3><p class="mt-3 text-sm leading-6 text-gray-600">{service.description}</p>
+              <span class="mt-5 inline-flex items-center gap-2 text-sm font-semibold text-forest">Explore service <Icon name="fa6-solid:arrow-right" class="text-xs transition group-hover:translate-x-1" /></span>
+            </a>
+          );
+        })}
+      </div>
+    </div>
+  </section>
+
+  <section class="relative overflow-hidden bg-night py-20 text-white">
+    <YuccaSprig class="pointer-events-none absolute -bottom-20 -right-16 h-96 w-96 text-white/5" />
+    <div class="relative mx-auto grid max-w-7xl gap-10 px-6 lg:grid-cols-[1fr_1.1fr] lg:items-center">
+      <div>
+        <p class="eyebrow">New · Virtual classes &amp; training</p>
+        <h2 class="mt-4 font-serif text-4xl leading-tight sm:text-5xl">Learn the craft,<br />live from home.</h2>
+        <p class="mt-5 max-w-lg text-base leading-7 text-white/85">One-to-one sessions on furniture, upholstery and interior design with Yucca Homeware Consultant, on Google Meet, Zoom or WhatsApp video. Book by the hour and pay with M-Pesa.</p>
+        <div class="mt-8 flex flex-wrap items-center gap-4">
+          <a href="/classes" class="inline-flex items-center gap-2 rounded-full bg-wheat px-6 py-3 text-sm font-semibold text-night transition hover:bg-white">Explore the classes <Icon name="fa6-solid:arrow-right" class="text-xs" /></a>
+          {rate?.cents && <span class="text-sm text-white/85">From <strong class="text-white">{formatMoneyWhole(rate.cents)}</strong> per hour</span>}
+        </div>
+      </div>
+      <ul class="grid gap-4 sm:grid-cols-3">
+        {Object.entries(tracks).map(([key, track]) => (
+          <li><a href={`/classes?track=${key}#courses`} class="group flex h-full flex-col rounded-3xl p-6 ring-1 ring-white/10 transition hover:-translate-y-1" style={`background-color:${track.bg}`}>
+            <span class="grid h-12 w-12 place-items-center rounded-2xl bg-white/15 text-lg"><Icon name={track.icon} /></span>
+            <span class="mt-5 font-serif text-xl">{track.label}</span>
+            <span class="mt-2 text-sm leading-6 text-white/90">{track.blurb}</span>
+          </a></li>
+        ))}
+      </ul>
+    </div>
+  </section>
+
+  {testimonials.length > 0 && (
+    <section class="relative overflow-hidden bg-forest py-20 text-white">
+      <YuccaSprig class="pointer-events-none absolute -bottom-16 -right-16 h-80 w-80 text-white/5" />
+      <div class="relative mx-auto max-w-5xl px-6 text-center"><p class="eyebrow">A note from our clients</p>
+        <div class="mt-10 grid gap-6 md:grid-cols-2">
+          {testimonials.map((item) => (
+            <figure class="rounded-3xl bg-white/5 p-8 text-left ring-1 ring-white/10"><Icon name="fa6-solid:quote-left" class="text-2xl text-wheat" /><blockquote class="mt-4 font-serif text-xl leading-relaxed">{item.quote}</blockquote><figcaption class="mt-5 text-xs uppercase tracking-widest text-white/85">{item.customerName}{item.location && ` · ${item.location}`}</figcaption></figure>
+          ))}
+        </div>
+      </div>
+    </section>
+  )}
+
+  {numbers.length >= 2 && (
+    <section class="bg-white py-14"><div class="mx-auto flex max-w-5xl flex-wrap justify-center gap-4 px-6 text-center">
+      {numbers.map((item) => <div class="min-w-[8.5rem] flex-1 rounded-3xl bg-cream px-4 py-7"><p class="font-serif text-4xl text-forest">{item.value}</p><p class="mt-2 text-xs uppercase tracking-[.14em] text-gray-600">{item.label}</p></div>)}
+    </div></section>
+  )}
+
+  {galleryPreview.length > 0 && (
+    <section class="mx-auto max-w-7xl px-6 py-16"><div class="flex items-end justify-between"><div><p class="eyebrow">Details that make a room</p><h2 class="mt-3 font-serif text-4xl">A few spaces we love</h2></div><a class="text-sm underline" href="/gallery">Explore the gallery</a></div>
+      <div class="mt-8 grid gap-4 sm:grid-cols-3">{galleryPreview.map((photo) => <a href="/gallery" class="group overflow-hidden"><img class="aspect-[4/3] w-full object-cover transition duration-500 group-hover:scale-105" src={photo.image} alt={photo.title} loading="lazy" /><p class="mt-3 font-serif text-xl">{photo.title}</p></a>)}</div>
+    </section>
+  )}
+
+  {posts.length > 0 && (
+    <section class="bg-cream py-16"><div class="mx-auto max-w-7xl px-6">
+      <div class="flex flex-wrap items-end justify-between gap-4"><div><p class="eyebrow">From the journal</p><h2 class="mt-3 font-serif text-4xl">Ideas for a softer home</h2></div><a class="inline-flex items-center gap-2 text-sm font-semibold text-forest" href="/journal">Read the journal <Icon name="fa6-solid:arrow-right" class="text-xs" /></a></div>
+      <div class="mt-8 grid gap-6 sm:grid-cols-2 lg:grid-cols-3">{posts.map((post) => <JournalCard post={post} />)}</div>
+    </div></section>
+  )}
+
+  <section class="mx-auto max-w-7xl px-6 py-20"><div class="grid gap-8 md:grid-cols-3 md:items-center"><div><p class="eyebrow">Come as you are</p><h2 class="mt-3 font-serif text-4xl">Let’s make room<br />for what matters.</h2></div><p class="text-sm leading-7 text-gray-600">A single cushion or a whole home, we’d love to hear what you have in mind. We’ll start with a conversation and take it from there.</p><div class="md:text-right"><a href="/contact" class="inline-block rounded-full bg-clay px-6 py-3 text-sm font-semibold text-white">Get in touch</a></div></div></section>
+</BaseLayout>
+
+<script>
+  // Photo slideshow in the hero: previous/next, pause, and a 6-second autoplay that starts paused for reduced motion.
+  const slides = [...document.querySelectorAll<HTMLElement>('[data-hero-slide]')];
+  if (slides.length > 1) {
+    let active = 0;
+    let paused = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const count = document.querySelector('[data-hero-count]');
+    const toggle = document.querySelector<HTMLButtonElement>('[data-hero-toggle]');
+    const render = () => {
+      slides.forEach((slide, index) => {
+        slide.classList.toggle('opacity-100', index === active);
+        slide.classList.toggle('opacity-0', index !== active);
+        slide.toggleAttribute('aria-hidden', index !== active);
+      });
+      if (count) count.textContent = `${String(active + 1).padStart(2, '0')} / ${String(slides.length).padStart(2, '0')}`;
+    };
+    const go = (step: number) => { active = (active + step + slides.length) % slides.length; render(); };
+    const syncToggle = () => { if (toggle) { toggle.setAttribute('aria-pressed', String(paused)); toggle.textContent = paused ? 'Play' : 'Pause'; } };
+    document.querySelector('[data-hero-prev]')?.addEventListener('click', () => go(-1));
+    document.querySelector('[data-hero-next]')?.addEventListener('click', () => go(1));
+    toggle?.addEventListener('click', () => { paused = !paused; syncToggle(); });
+    syncToggle();
+    setInterval(() => { if (!paused) go(1); }, 6000);
+  }
+</script>

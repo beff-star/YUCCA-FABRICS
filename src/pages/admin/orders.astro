@@ -1,0 +1,101 @@
+---
+import type { BatchItem } from 'drizzle-orm/batch';
+import { and, desc, eq, inArray, or, sql, type SQL } from 'drizzle-orm';
+import StatusBadge from '~/components/StatusBadge.astro';
+import { ORDER_STATUSES, PAYMENT_STATUSES } from '~/db/schema';
+import AdminLayout from '~/layouts/AdminLayout.astro';
+import { done, int, text } from '~/lib/admin-form';
+import { contains } from '~/lib/catalogue';
+import { db, runBatch, schema } from '~/lib/db';
+import { emailBody, sendEmail } from '~/lib/email';
+import { formatDateTime } from '~/lib/format';
+import { paymentMethodLabel, statusLabel } from '~/lib/labels';
+import { formatMoney } from '~/lib/money';
+
+const o = schema.orders;
+type OrderStatus = (typeof ORDER_STATUSES)[number];
+type PaymentStatus = (typeof PAYMENT_STATUSES)[number];
+
+if (Astro.request.method === 'POST') {
+  const form = await Astro.request.formData();
+  const id = int(form, 'id');
+  const status = text(form, 'status', 20) as OrderStatus;
+  const paymentStatus = text(form, 'payment_status', 20) as PaymentStatus;
+  const [order] = id ? await db.select().from(o).where(eq(o.id, id)) : [];
+  if (!order || !ORDER_STATUSES.includes(status) || !PAYMENT_STATUSES.includes(paymentStatus)) return done(Astro, 'error', 'Choose a valid order and status.');
+  if (order.status === 'cancelled' && status !== 'cancelled') return done(Astro, 'error', 'A cancelled order can’t be reopened; its stock has already been returned. Place a new order instead.');
+  if (status === 'cancelled' && paymentStatus === 'paid') return done(Astro, 'error', 'Refund the payment (and mark it refunded) before cancelling a paid order.');
+
+  const statements: BatchItem<'sqlite'>[] = [
+    db.update(o).set({ status, paymentStatus }).where(eq(o.id, order.id)),
+    db.update(schema.payments).set({ status: paymentStatus === 'paid' ? 'paid' : paymentStatus === 'failed' ? 'failed' : paymentStatus === 'refunded' ? 'refunded' : 'pending' })
+      .where(eq(schema.payments.orderId, order.id)),
+  ];
+  if (status === 'cancelled' && order.status !== 'cancelled') {
+    // Put the stock back for products that still exist.
+    const items = await db.select().from(schema.orderItems).where(eq(schema.orderItems.orderId, order.id));
+    for (const item of items) {
+      if (item.productId) statements.push(db.update(schema.products).set({ stock: sql`${schema.products.stock} + ${item.quantity}` }).where(eq(schema.products.id, item.productId)));
+    }
+  }
+  await runBatch(statements);
+  if (status !== order.status || paymentStatus !== order.paymentStatus) {
+    Astro.locals.cfContext.waitUntil(sendEmail({
+      to: order.email,
+      subject: `Update on your Yucca Homeware order ${order.orderNumber}`,
+      text: emailBody(`Hello ${order.customerName},`, `Your order ${order.orderNumber} is now: ${statusLabel(status)} (payment: ${statusLabel(paymentStatus)}).`, 'Reply to this email if you have any questions.'),
+    }));
+  }
+  return done(Astro, 'success', `Order ${order.orderNumber} updated${status === 'cancelled' && order.status !== 'cancelled' ? ' and its stock returned' : ''}.`);
+}
+
+const params = Astro.url.searchParams;
+const q = (params.get('q') ?? '').trim().slice(0, 80);
+const statusFilter = (ORDER_STATUSES as readonly string[]).includes(params.get('status') ?? '') ? (params.get('status') as OrderStatus) : null;
+const conditions: (SQL | undefined)[] = [];
+if (q) conditions.push(or(contains(o.orderNumber, q), contains(o.customerName, q), contains(o.email, q), contains(o.phone, q)));
+if (statusFilter) conditions.push(eq(o.status, statusFilter));
+const orders = await db.select().from(o).where(and(...conditions)).orderBy(desc(o.createdAt)).limit(100);
+const items = orders.length ? await db.select().from(schema.orderItems).where(inArray(schema.orderItems.orderId, orders.map((order) => order.id))) : [];
+const payments = orders.length ? await db.select().from(schema.payments).where(inArray(schema.payments.orderId, orders.map((order) => order.id))) : [];
+---
+<AdminLayout title="Orders" heading="Orders" intro="Search, update delivery and payment status, and see what each customer ordered. Customers are emailed when a status changes.">
+  <form class="flex flex-wrap gap-3 rounded-3xl bg-white p-4 shadow-sm ring-1 ring-ink/5" role="search">
+    <label class="sr-only" for="q">Search orders</label><input id="q" class="form-control max-w-xs" name="q" value={q} placeholder="Order number, name, email or phone" />
+    <label class="sr-only" for="status">Status</label><select id="status" class="form-control max-w-48" name="status"><option value="">Any status</option>{ORDER_STATUSES.map((s) => <option value={s} selected={statusFilter === s}>{statusLabel(s)}</option>)}</select>
+    <button class="btn-primary py-2">Filter</button>
+  </form>
+  <div class="mt-5 grid gap-3">
+    {orders.length === 0 && <p class="rounded-3xl bg-white p-6 text-sm text-gray-600">No orders match.</p>}
+    {orders.map((order) => {
+      const payment = payments.find((p) => p.orderId === order.id);
+      return (
+        <details class="group rounded-3xl bg-white shadow-sm ring-1 ring-ink/5">
+          <summary class="grid cursor-pointer list-none gap-2 p-5 sm:grid-cols-[1.2fr_1fr_auto_auto_auto] sm:items-center">
+            <span><strong>{order.orderNumber}</strong><br /><span class="text-xs text-gray-500">{formatDateTime(order.createdAt)}</span></span>
+            <span class="text-sm">{order.customerName}<br /><span class="text-xs text-gray-500">{paymentMethodLabel(order.paymentMethod)}</span></span>
+            <span class="font-semibold">{formatMoney(order.totalCents)}</span>
+            <StatusBadge status={order.status} />
+            <StatusBadge status={order.paymentStatus} />
+          </summary>
+          <div class="grid gap-6 border-t border-ink/10 p-5 lg:grid-cols-[1fr_340px]">
+            <div class="text-sm">
+              <ul class="divide-y divide-ink/10">{items.filter((item) => item.orderId === order.id).map((item) => <li class="flex justify-between gap-4 py-2"><span>{item.productName} <span class="text-gray-500">({item.sku}) × {item.quantity}</span></span><span>{formatMoney(item.lineTotalCents)}</span></li>)}</ul>
+              <p class="mt-3 text-xs text-gray-600">Subtotal {formatMoney(order.subtotalCents)}{order.discountCents > 0 && ` · discount −${formatMoney(order.discountCents)}`} · VAT {formatMoney(order.taxCents)} · delivery {formatMoney(order.deliveryFeeCents)}</p>
+              <p class="mt-4 leading-6"><strong>Deliver to:</strong> {order.addressLine}, {order.city}{order.county && `, ${order.county}`}{order.postalCode && ` ${order.postalCode}`}<br /><a class="underline" href={`tel:${order.phone}`}>{order.phone}</a> · <a class="underline" href={`mailto:${order.email}`}>{order.email}</a></p>
+              {order.deliveryInstructions && <p class="mt-2 rounded-xl bg-sand p-3 text-xs">{order.deliveryInstructions}</p>}
+              {payment?.reference && <p class="mt-3 text-xs">Payment reference: <span class="font-mono font-semibold">{payment.reference}</span></p>}
+            </div>
+            <form method="post" class="grid h-fit gap-3 rounded-2xl bg-sand p-4">
+              <input type="hidden" name="id" value={order.id} />
+              <label class="text-sm">Order status<select class="form-control mt-1" name="status">{ORDER_STATUSES.map((s) => <option value={s} selected={order.status === s}>{statusLabel(s)}</option>)}</select></label>
+              <label class="text-sm">Payment status<select class="form-control mt-1" name="payment_status">{PAYMENT_STATUSES.map((s) => <option value={s} selected={order.paymentStatus === s}>{statusLabel(s)}</option>)}</select></label>
+              <button class="btn-primary py-2">Update order</button>
+              <p class="text-xs text-gray-500">Cancelling returns the stock. A paid order must be refunded first.</p>
+            </form>
+          </div>
+        </details>
+      );
+    })}
+  </div>
+</AdminLayout>

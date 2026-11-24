@@ -1,0 +1,38 @@
+---
+import Icon from '~/components/Icon.astro';
+import OrderItems from '~/components/OrderItems.astro';
+import StatusBadge from '~/components/StatusBadge.astro';
+import AccountLayout from '~/layouts/AccountLayout.astro';
+import { formatDateTime } from '~/lib/format';
+import { paymentMethodLabel, statusLabel } from '~/lib/labels';
+import { ORDER_PROGRESS, orderWithItems } from '~/lib/orders';
+
+const data = await orderWithItems(Astro.params.number ?? '');
+// Another customer's order is reported as not found rather than forbidden.
+if (!data || data.order.userId !== Astro.locals.user!.id) return Astro.rewrite('/404');
+const { order } = data;
+const reached = ORDER_PROGRESS.indexOf(order.status as (typeof ORDER_PROGRESS)[number]);
+---
+<AccountLayout active="orders" title={`Order ${order.orderNumber}`} heading={`Order ${order.orderNumber}`} intro={`Placed ${formatDateTime(order.createdAt)}`} action={{ label: 'All orders', href: '/account/orders', icon: 'fa6-solid:arrow-left' }}>
+  <div class="rounded-3xl bg-white p-6 shadow-sm ring-1 ring-ink/5">
+    {order.status !== 'cancelled' ? (
+      <ol class="grid grid-cols-5 gap-2 text-center text-[11px] font-semibold sm:text-xs" aria-label="Order progress">
+        {ORDER_PROGRESS.map((step, index) => (
+          <li class:list={['flex flex-col items-center gap-2', index <= reached ? 'text-forest' : 'text-gray-500']} aria-current={index === reached ? 'step' : undefined}>
+            <span class:list={['grid h-9 w-9 place-items-center rounded-full', index <= reached ? 'bg-forest text-white' : 'bg-cream']}>{index < reached ? <Icon name="fa6-solid:check" class="text-xs" /> : index + 1}</span>{statusLabel(step)}
+          </li>
+        ))}
+      </ol>
+    ) : (
+      <p class="flex items-center gap-3 rounded-2xl bg-[#F6E1DE] p-4 text-sm text-[#7A2E22]"><Icon name="fa6-solid:circle-info" />This order was cancelled. Please contact us if you have any questions.</p>
+    )}
+  </div>
+  <div class="mt-6 grid gap-6 lg:grid-cols-[1fr_300px]">
+    <div class="rounded-3xl bg-white p-6 shadow-sm ring-1 ring-ink/5"><h2 class="font-serif text-xl">Items</h2><OrderItems data={data} /></div>
+    <aside class="grid content-start gap-6">
+      <div class="rounded-3xl bg-white p-6 shadow-sm ring-1 ring-ink/5"><h2 class="font-serif text-xl">Delivery</h2><p class="mt-3 text-sm leading-6 text-gray-600"><strong class="text-ink">{order.customerName}</strong><br />{order.addressLine}<br />{order.city}{order.county && `, ${order.county}`}<br />{order.phone}</p>{order.deliveryInstructions && <p class="mt-3 rounded-2xl bg-cream p-3 text-xs leading-5 text-gray-600">{order.deliveryInstructions}</p>}</div>
+      <div class="rounded-3xl bg-white p-6 shadow-sm ring-1 ring-ink/5"><h2 class="font-serif text-xl">Payment</h2><p class="mt-3 text-sm text-gray-600">{paymentMethodLabel(order.paymentMethod)}</p><div class="mt-3"><StatusBadge status={order.paymentStatus} /></div>{order.paymentStatus !== 'paid' && order.status !== 'cancelled' && order.paymentMethod !== 'cod' && <a class="mt-4 inline-flex text-sm font-semibold text-forest underline" href={`/order/${order.orderNumber}`}>Complete payment</a>}</div>
+      <a href="/contact" class="flex items-center gap-3 rounded-3xl bg-forest p-5 text-sm text-white transition hover:bg-olive"><Icon name="fa6-solid:headset" class="text-lg text-wheat" /><span><strong class="block">Need help with this order?</strong>Contact us and quote {order.orderNumber}.</span></a>
+    </aside>
+  </div>
+</AccountLayout>

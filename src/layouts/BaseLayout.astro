@@ -1,0 +1,87 @@
+---
+import '@fontsource/inter/400.css';
+import '@fontsource/inter/500.css';
+import '@fontsource/inter/600.css';
+import '@fontsource/inter/700.css';
+import '@fontsource/poppins/500.css';
+import '@fontsource/poppins/600.css';
+import '@fontsource/poppins/700.css';
+import '~/styles/global.css';
+import FormAlert from '~/components/FormAlert.astro';
+import Footer from '~/components/Footer.astro';
+import Header from '~/components/Header.astro';
+import { BUSINESS_NAME, siteOrigin } from '~/lib/seo';
+
+interface Props {
+  title?: string;
+  description?: string;
+  /** JSON-LD object(s) for the page. */
+  structuredData?: object | object[];
+  image?: string;
+  imageAlt?: string;
+  /** Open Graph type. */
+  type?: 'website' | 'article' | 'product';
+  noindex?: boolean;
+}
+const {
+  title = 'Yucca Homeware | Upholstery Fabrics & Interior Design in Nairobi',
+  description = 'Upholstery fabrics by the metre, furniture reupholstery, interior design consultations and virtual classes from Yucca Homeware in Nairobi, Kenya.',
+  structuredData,
+  image = '/images/fabrics/santa-boucle.jpeg',
+  imageAlt = 'Yucca Homeware upholstery fabric',
+  type = 'website',
+  noindex = false,
+} = Astro.props;
+const origin = siteOrigin(Astro.url);
+// Query strings (filters, sorting) share the page's canonical URL; later pages of a list keep their page number.
+const canonicalUrl = new URL(Astro.url.pathname, origin);
+const page = Number(Astro.url.searchParams.get('page'));
+if (Number.isInteger(page) && page > 1) canonicalUrl.searchParams.set('page', String(page));
+const canonical = canonicalUrl.toString();
+const ogImage = new URL(image, origin).toString();
+// "<" is escaped so a value can never close the script tag early.
+const jsonLd = structuredData ? JSON.stringify(structuredData).replace(/</g, '\\u003c') : null;
+const { flash } = Astro.locals;
+---
+<!doctype html>
+<html lang="en-KE">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{title}</title>
+    <meta name="description" content={description} />
+    <meta name="theme-color" content="#3F5320" />
+    <meta name="robots" content={noindex ? 'noindex, follow' : 'index, follow, max-image-preview:large'} />
+    <link rel="canonical" href={canonical} />
+    <meta name="geo.region" content="KE-30" />
+    <meta name="geo.placename" content="Nairobi" />
+    <meta property="og:type" content={type} />
+    <meta property="og:site_name" content={BUSINESS_NAME} />
+    <meta property="og:locale" content="en_KE" />
+    <meta property="og:title" content={title} />
+    <meta property="og:description" content={description} />
+    <meta property="og:url" content={canonical} />
+    <meta property="og:image" content={ogImage} />
+    <meta property="og:image:alt" content={imageAlt} />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content={title} />
+    <meta name="twitter:description" content={description} />
+    <meta name="twitter:image" content={ogImage} />
+    <link rel="icon" type="image/jpeg" href="/images/yucca-homeware-logo.jpeg" />
+    <link rel="apple-touch-icon" href="/images/yucca-homeware-logo.jpeg" />
+    <link rel="sitemap" type="application/xml" href="/sitemap.xml" />
+    {jsonLd && <script type="application/ld+json" set:html={jsonLd} />}
+  </head>
+  <body id="top" class="bg-sand font-sans text-ink antialiased">
+    <a href="#main" class="skip-link">Skip to content</a>
+    <Header />
+    <main id="main" tabindex="-1">
+      {flash && <div class="mx-auto max-w-7xl px-5 pt-6"><FormAlert message={flash.message} type={flash.type} /></div>}
+      <slot />
+    </main>
+    <Footer />
+    <script>
+      import '~/scripts/site';
+    </script>
+  </body>
+</html>

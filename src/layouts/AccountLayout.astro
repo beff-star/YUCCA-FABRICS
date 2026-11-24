@@ -1,0 +1,49 @@
+---
+import Icon from '~/components/Icon.astro';
+import YuccaSprig from '~/components/YuccaSprig.astro';
+import BaseLayout from './BaseLayout.astro';
+
+type Section = 'dashboard' | 'orders' | 'classes' | 'consultations' | 'requests' | 'wishlist' | 'profile';
+interface Props {
+  active: Section;
+  heading: string;
+  intro?: string;
+  action?: { label: string; href: string; icon: string };
+  title?: string;
+}
+const { active, heading, intro, action, title = heading } = Astro.props;
+const user = Astro.locals.user!;
+const links: { key: Section; href: string; icon: string; label: string }[] = [
+  { key: 'dashboard', href: '/account', icon: 'fa6-solid:house', label: 'Overview' },
+  { key: 'orders', href: '/account/orders', icon: 'fa6-solid:bag-shopping', label: 'Orders' },
+  { key: 'classes', href: '/account/classes', icon: 'fa6-solid:chalkboard-user', label: 'Classes' },
+  { key: 'consultations', href: '/account/consultations', icon: 'fa6-solid:calendar-check', label: 'Consultations' },
+  { key: 'requests', href: '/account/service-requests', icon: 'fa6-solid:couch', label: 'Service requests' },
+  { key: 'wishlist', href: '/account/wishlist', icon: 'fa6-solid:heart', label: 'Favourites' },
+  { key: 'profile', href: '/account/profile', icon: 'fa6-solid:user', label: 'Profile' },
+];
+const initials = user.name.trim().split(/\s+/).slice(0, 2).map((part) => part[0]?.toUpperCase() ?? '').join('') || 'Y';
+---
+<BaseLayout title={`${title} | Yucca Homeware`} noindex>
+  <section class="relative overflow-hidden bg-cream">
+    <YuccaSprig class="pointer-events-none absolute -right-12 -top-12 hidden h-64 w-64 text-olive/10 sm:block" />
+    <div class="relative mx-auto flex max-w-7xl flex-wrap items-end justify-between gap-5 px-5 py-10">
+      <div><p class="eyebrow">Your Yucca account</p><h1 class="mt-2 font-serif text-3xl sm:text-4xl">{heading}</h1>{intro && <p class="mt-2 max-w-xl text-sm leading-6 text-gray-600">{intro}</p>}</div>
+      {action && <a href={action.href} class="btn-primary shadow-md"><Icon name={action.icon} class="text-xs" />{action.label}</a>}
+    </div>
+  </section>
+  <section class="mx-auto max-w-7xl px-5 py-10">
+    <div class="grid gap-8 lg:grid-cols-[250px_1fr]">
+      <aside class="min-w-0">
+        <div class="hidden items-center gap-3 rounded-3xl bg-white p-5 shadow-sm ring-1 ring-ink/5 lg:flex"><span class="grid h-12 w-12 shrink-0 place-items-center rounded-full bg-forest font-semibold text-white">{initials}</span><span class="min-w-0"><span class="block truncate font-semibold">{user.name}</span><span class="block truncate text-xs text-gray-500">{user.email}</span></span></div>
+        <nav class="-mx-5 flex gap-2 overflow-x-auto px-5 pb-1 lg:mx-0 lg:mt-4 lg:grid lg:gap-1 lg:overflow-visible lg:rounded-3xl lg:bg-white lg:p-3 lg:shadow-sm lg:ring-1 lg:ring-ink/5" aria-label="Account">
+          {links.map((link) => (
+            <a href={link.href} class:list={['inline-flex shrink-0 items-center gap-3 rounded-full px-4 py-2.5 text-sm font-medium transition lg:rounded-xl', link.key === active ? 'bg-forest text-white' : 'bg-white text-ink hover:bg-cream lg:bg-transparent']} aria-current={link.key === active ? 'page' : undefined}><Icon name={link.icon} class:list={['w-4', { 'text-sage': link.key !== active }]} />{link.label}</a>
+          ))}
+          <form action="/auth/logout" method="post" class="shrink-0 lg:mt-2 lg:border-t lg:border-ink/10 lg:pt-2"><button class="inline-flex w-full items-center gap-3 rounded-full bg-white px-4 py-2.5 text-sm font-medium text-ink transition hover:bg-cream hover:text-clay lg:rounded-xl lg:bg-transparent"><Icon name="fa6-solid:arrow-right-from-bracket" class="w-4 text-sage" />Sign out</button></form>
+        </nav>
+      </aside>
+      <div class="min-w-0"><slot /></div>
+    </div>
+  </section>
+</BaseLayout>

@@ -1,0 +1,75 @@
+---
+import { and, eq, ne } from 'drizzle-orm';
+import { APIError } from 'better-auth/api';
+import FormAlert from '~/components/FormAlert.astro';
+import PasswordInput from '~/components/PasswordInput.astro';
+import AccountLayout from '~/layouts/AccountLayout.astro';
+import { auth, passwordProblem } from '~/lib/auth';
+import { db, schema } from '~/lib/db';
+import { setFlash } from '~/lib/flash';
+
+const user = Astro.locals.user!;
+const errors: string[] = [];
+const values = { name: user.name, email: user.email, phone: user.phone ?? '' };
+
+if (Astro.request.method === 'POST') {
+  const form = await Astro.request.formData();
+  if (form.get('intent') === 'password') {
+    const current = String(form.get('current_password') ?? '');
+    const next = String(form.get('new_password') ?? '');
+    const weak = passwordProblem(next);
+    if (weak) errors.push(weak);
+    else {
+      try {
+        await auth.api.changePassword({ body: { currentPassword: current, newPassword: next, revokeOtherSessions: true }, headers: Astro.request.headers });
+        setFlash(Astro.cookies, 'success', 'Your password has been changed. Other devices have been signed out.');
+        return Astro.redirect('/account/profile', 303);
+      } catch (cause) {
+        if (!(cause instanceof APIError)) throw cause;
+        errors.push('Your current password is incorrect.');
+      }
+    }
+  } else {
+    values.name = String(form.get('name') ?? '').trim();
+    values.email = String(form.get('email') ?? '').trim().toLowerCase();
+    values.phone = String(form.get('phone') ?? '').trim();
+    if (!values.name || values.name.length > 150) errors.push('Please enter your full name.');
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(values.email) || values.email.length > 190) errors.push('Enter a valid email address.');
+    if (values.phone.length > 40) errors.push('Enter a shorter phone number.');
+    if (errors.length === 0) {
+      const [taken] = await db.select({ id: schema.user.id }).from(schema.user).where(and(eq(schema.user.email, values.email), ne(schema.user.id, user.id)));
+      if (taken) errors.push('That email is already used by another account.');
+    }
+    if (errors.length === 0) {
+      await db.update(schema.user).set({ name: values.name, email: values.email, phone: values.phone || null }).where(eq(schema.user.id, user.id));
+      // Refresh the cached session cookie so the header shows the new name straight away.
+      const { headers } = await auth.api.getSession({ headers: Astro.request.headers, query: { disableCookieCache: true }, returnHeaders: true });
+      const response = new Response(null, { status: 303, headers: { Location: '/account/profile' } });
+      for (const cookie of headers.getSetCookie()) response.headers.append('Set-Cookie', cookie);
+      setFlash(Astro.cookies, 'success', 'Your details have been saved.');
+      return response;
+    }
+  }
+}
+---
+<AccountLayout active="profile" heading="Your profile" intro="Keep your contact details up to date so we can reach you about orders and bookings.">
+  {errors.map((error) => <FormAlert message={error} class="mb-4" />)}
+  <div class="grid gap-6 xl:grid-cols-2">
+    <form method="post" class="grid gap-4 rounded-3xl bg-white p-6 shadow-sm ring-1 ring-ink/5 sm:p-8">
+      <input type="hidden" name="intent" value="details" />
+      <h2 class="font-serif text-2xl">Contact details</h2>
+      <label class="text-sm font-medium">Full name<input class="form-control mt-1" name="name" required maxlength="150" autocomplete="name" value={values.name} /></label>
+      <label class="text-sm font-medium">Email<input class="form-control mt-1" type="email" name="email" required autocomplete="email" value={values.email} /></label>
+      <label class="text-sm font-medium">Phone<input class="form-control mt-1" type="tel" name="phone" maxlength="40" autocomplete="tel" value={values.phone} /></label>
+      {user.username && <p class="text-xs text-gray-500">Username: <strong>{user.username}</strong></p>}
+      <button class="btn-primary w-fit">Save details</button>
+    </form>
+    <form method="post" class="grid content-start gap-4 rounded-3xl bg-white p-6 shadow-sm ring-1 ring-ink/5 sm:p-8">
+      <input type="hidden" name="intent" value="password" />
+      <h2 class="font-serif text-2xl">Change password</h2>
+      <PasswordInput name="current_password" id="current-password" label="Current password" autocomplete="current-password" />
+      <PasswordInput name="new_password" id="new-password" label="New password" autocomplete="new-password" minlength={10} hint="At least 10 characters, with an uppercase letter, a lowercase letter and a number." />
+      <button class="btn-primary w-fit">Change password</button>
+    </form>
+  </div>
+</AccountLayout>

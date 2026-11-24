@@ -1,0 +1,50 @@
+---
+import { eq } from 'drizzle-orm';
+import { APIError } from 'better-auth/api';
+import PasswordInput from '~/components/PasswordInput.astro';
+import AuthLayout from '~/layouts/AuthLayout.astro';
+import { auth, redirectWithHeaders, safeNext } from '~/lib/auth';
+import { mergeGuestCart } from '~/lib/cart';
+import { db, schema } from '~/lib/db';
+import { allow, clientIp, reset } from '~/lib/throttle';
+
+const next = Astro.url.searchParams.get('next');
+if (Astro.locals.user) return Astro.redirect(safeNext(next, Astro.locals.user.role === 'admin' ? '/admin' : '/account'));
+
+let error = '';
+let email = '';
+if (Astro.request.method === 'POST') {
+  const form = await Astro.request.formData();
+  email = String(form.get('email') ?? '').trim().toLowerCase();
+  const password = String(form.get('password') ?? '');
+  const throttleKey = `login:${email}:${clientIp(Astro.request)}`;
+  if (!email || !password) {
+    error = 'Enter your email and password.';
+  } else if (!(await allow(throttleKey, 8, 15 * 60))) {
+    error = 'Too many sign-in attempts. Please wait 15 minutes and try again.';
+  } else {
+    const [account] = await db.select({ id: schema.user.id, role: schema.user.role, status: schema.user.status }).from(schema.user).where(eq(schema.user.email, email));
+    if (account?.status === 'active') {
+      try {
+        const { headers } = await auth.api.signInEmail({ body: { email, password }, headers: Astro.request.headers, returnHeaders: true });
+        await reset(throttleKey);
+        await mergeGuestCart(Astro.cookies, account.id);
+        return redirectWithHeaders(safeNext(next, account.role === 'admin' ? '/admin' : '/account'), headers);
+      } catch (cause) {
+        if (!(cause instanceof APIError)) throw cause;
+      }
+    }
+    // Same message for unknown, wrong-password and suspended accounts, so emails can't be probed.
+    error = 'The email or password is incorrect, or the account is unavailable.';
+  }
+}
+---
+<AuthLayout title="Sign in" eyebrow="Your Yucca account" heading="Welcome back" intro="Sign in to follow your orders, classes, bookings and saved fabrics." errors={error ? [error] : []}>
+  <form method="post" class="grid gap-5">
+    <label class="text-sm font-medium">Email<input class="form-control mt-1" type="email" name="email" required autocomplete="email" value={email} /></label>
+    <PasswordInput name="password" id="login-password" label="Password" autocomplete="current-password" />
+    <div class="-mt-2 text-right"><a class="text-sm font-medium text-forest underline-offset-4 hover:underline" href="/auth/forgot-password">Forgot your password?</a></div>
+    <button class="rounded-full bg-forest px-6 py-3.5 font-semibold text-white transition hover:bg-olive">Sign in</button>
+  </form>
+  <p class="mt-8 rounded-2xl bg-cream p-4 text-center text-sm">New to Yucca? <a class="font-semibold text-forest underline" href={`/auth/register${next ? `?next=${encodeURIComponent(next)}` : ''}`}>Create an account</a></p>
+</AuthLayout>

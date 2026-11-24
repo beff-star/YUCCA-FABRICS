@@ -1,0 +1,82 @@
+---
+import { and, count, desc, eq, gte, inArray, sql, sum } from 'drizzle-orm';
+import Icon from '~/components/Icon.astro';
+import StatusBadge from '~/components/StatusBadge.astro';
+import AccountLayout from '~/layouts/AccountLayout.astro';
+import { db, schema } from '~/lib/db';
+import { formatClock, formatDate, formatDateTime, formatIsoDate, todayInNairobi } from '~/lib/format';
+import { formatMoney, formatMoneyWhole } from '~/lib/money';
+
+const user = Astro.locals.user!;
+const o = schema.orders;
+const t = schema.trainingBookings;
+const [[stats], [saved], [consultCount], [classCount], orders, consultations, requests, classes] = await db.batch([
+  db.select({ orders: count(), spend: sum(o.totalCents) }).from(o).where(eq(o.userId, user.id)),
+  db.select({ n: count() }).from(schema.wishlistItems).innerJoin(schema.products, eq(schema.products.id, schema.wishlistItems.productId))
+    .where(and(eq(schema.wishlistItems.userId, user.id), eq(schema.products.isActive, true))),
+  db.select({ n: count() }).from(schema.consultations).where(eq(schema.consultations.userId, user.id)),
+  db.select({ n: count() }).from(t).where(and(eq(t.userId, user.id), inArray(t.status, ['confirmed', 'completed']))),
+  db.select({ orderNumber: o.orderNumber, totalCents: o.totalCents, status: o.status, createdAt: o.createdAt }).from(o).where(eq(o.userId, user.id)).orderBy(desc(o.createdAt)).limit(3),
+  db.select().from(schema.consultations).where(and(eq(schema.consultations.userId, user.id), gte(schema.consultations.preferredDate, todayInNairobi())))
+    .orderBy(schema.consultations.preferredDate, schema.consultations.preferredTime).limit(3),
+  db.select({ status: schema.serviceRequests.status, createdAt: schema.serviceRequests.createdAt, description: schema.serviceRequests.description, serviceName: schema.services.name })
+    .from(schema.serviceRequests).leftJoin(schema.services, eq(schema.services.id, schema.serviceRequests.serviceId))
+    .where(eq(schema.serviceRequests.userId, user.id)).orderBy(desc(schema.serviceRequests.createdAt)).limit(3),
+  db.select({ reference: t.reference, startsAt: t.startsAt, hours: t.hours, status: t.status, title: schema.trainingCourses.title })
+    .from(t).innerJoin(schema.trainingCourses, eq(schema.trainingCourses.id, t.courseId))
+    .where(and(eq(t.userId, user.id), eq(t.status, 'confirmed'), gte(t.startsAt, sql`${Date.now() - 8 * 3_600_000}`))).orderBy(t.startsAt).limit(3),
+]);
+const tiles = [
+  ['fa6-solid:bag-shopping', '#1F5B43', 'text-white', 'Orders', String(stats?.orders ?? 0), '/account/orders'],
+  ['fa6-solid:wallet', '#16646E', 'text-white', 'Total spent', formatMoneyWhole(Number(stats?.spend ?? 0)), '/account/orders'],
+  ['fa6-solid:chalkboard-user', '#252E16', 'text-white', 'Classes', String(classCount?.n ?? 0), '/account/classes'],
+  ['fa6-solid:heart', '#A9461E', 'text-white', 'Saved fabrics', String(saved?.n ?? 0), '/account/wishlist'],
+  ['fa6-solid:calendar-check', '#E3A82B', 'text-ink', 'Consultations', String(consultCount?.n ?? 0), '/account/consultations'],
+];
+---
+<AccountLayout active="dashboard" title="My account" heading={`Hello, ${user.name.split(' ')[0]}`} intro="Your orders, classes, bookings and saved fabrics, all in one place." action={{ label: 'Shop fabrics', href: '/shop', icon: 'fa6-solid:swatchbook' }}>
+  <div class="grid grid-cols-2 gap-4 sm:grid-cols-3 xl:grid-cols-5">
+    {tiles.map(([icon, colour, iconText, label, value, href]) => (
+      <a href={href} class="group rounded-3xl bg-white p-5 shadow-sm ring-1 ring-ink/5 transition hover:shadow-lg"><span class:list={['grid h-11 w-11 place-items-center rounded-2xl', iconText]} style={`background-color:${colour}`}><Icon name={icon!} /></span><p class="mt-4 font-serif text-xl sm:text-2xl">{value}</p><p class="mt-1 text-xs uppercase tracking-[.14em] text-gray-500">{label}</p></a>
+    ))}
+  </div>
+
+  {classes.length > 0 && (
+    <div class="mt-8 rounded-3xl bg-night p-6 text-white shadow-sm">
+      <div class="flex items-center justify-between gap-4"><h2 class="font-serif text-2xl">Upcoming classes</h2><a class="text-sm font-semibold text-wheat" href="/account/classes">All classes</a></div>
+      <ul class="mt-4 grid gap-3">
+        {classes.map((item) => <li><a href={`/classes/booking/${item.reference}`} class="flex flex-wrap items-center justify-between gap-3 rounded-2xl bg-white/5 p-4 ring-1 ring-white/10 transition hover:bg-white/10"><span><span class="block font-semibold">{item.title}</span><span class="text-sm text-white/85">{formatDateTime(item.startsAt)} · {item.hours} {item.hours === 1 ? 'hour' : 'hours'}</span></span><span class="inline-flex items-center gap-2 text-sm font-semibold text-wheat">Details <Icon name="fa6-solid:arrow-right" class="text-xs" /></span></a></li>)}
+      </ul>
+    </div>
+  )}
+
+  <div class="mt-8 rounded-3xl bg-white p-6 shadow-sm ring-1 ring-ink/5">
+    <div class="flex items-center justify-between gap-4"><h2 class="font-serif text-2xl">Recent orders</h2><a class="text-sm font-semibold text-forest" href="/account/orders">All orders <Icon name="fa6-solid:arrow-right" class="inline text-xs" /></a></div>
+    {orders.length > 0 ? (
+      <ul class="mt-4 divide-y divide-ink/10">
+        {orders.map((order) => <li><a href={`/account/orders/${order.orderNumber}`} class="flex flex-wrap items-center justify-between gap-3 py-4 transition hover:text-forest"><span><span class="block font-semibold">{order.orderNumber}</span><span class="text-xs text-gray-500">{formatDate(order.createdAt)}</span></span><span class="flex items-center gap-4"><StatusBadge status={order.status} /><span class="font-semibold">{formatMoney(order.totalCents)}</span><Icon name="fa6-solid:chevron-right" class="text-xs text-gray-500" /></span></a></li>)}
+      </ul>
+    ) : (
+      <p class="mt-4 rounded-2xl bg-cream p-5 text-sm text-gray-600">No orders yet. <a class="font-semibold text-forest underline" href="/shop">Explore the fabric collection</a>.</p>
+    )}
+  </div>
+
+  <div class="mt-8 grid gap-8 md:grid-cols-2">
+    <div class="rounded-3xl bg-white p-6 shadow-sm ring-1 ring-ink/5">
+      <div class="flex items-center justify-between gap-4"><h2 class="font-serif text-xl">Upcoming consultations</h2><a class="text-xs font-semibold text-forest" href="/account/consultations">View all</a></div>
+      {consultations.length > 0 ? consultations.map((item) => (
+        <div class="mt-4 flex items-start justify-between gap-3 rounded-2xl bg-cream p-4"><div><p class="font-semibold">{item.consultationType}</p><p class="mt-1 text-sm text-gray-600"><Icon name="fa6-regular:calendar" class="mr-1.5 inline" />{formatIsoDate(item.preferredDate)} · {formatClock(item.preferredTime)}</p></div><StatusBadge status={item.status} /></div>
+      )) : (
+        <p class="mt-4 rounded-2xl bg-cream p-5 text-sm text-gray-600">Nothing booked yet. <a class="font-semibold text-forest underline" href="/consultations">Book a design conversation</a>.</p>
+      )}
+    </div>
+    <div class="rounded-3xl bg-white p-6 shadow-sm ring-1 ring-ink/5">
+      <div class="flex items-center justify-between gap-4"><h2 class="font-serif text-xl">Service requests</h2><a class="text-xs font-semibold text-forest" href="/account/service-requests">View all</a></div>
+      {requests.length > 0 ? requests.map((item) => (
+        <div class="mt-4 rounded-2xl bg-cream p-4"><div class="flex items-start justify-between gap-3"><p class="font-semibold">{item.serviceName ?? 'Project enquiry'}</p><StatusBadge status={item.status} /></div><p class="mt-1 line-clamp-2 text-sm text-gray-600">{item.description}</p><p class="mt-2 text-xs text-gray-500">{formatDate(item.createdAt)}</p></div>
+      )) : (
+        <p class="mt-4 rounded-2xl bg-cream p-5 text-sm text-gray-600">No requests yet. <a class="font-semibold text-forest underline" href="/services">Explore our services</a>.</p>
+      )}
+    </div>
+  </div>
+</AccountLayout>

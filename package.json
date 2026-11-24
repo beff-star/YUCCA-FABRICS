@@ -1,0 +1,51 @@
+{
+  "name": "yucca-homeware",
+  "type": "module",
+  "version": "1.0.0",
+  "private": true,
+  "packageManager": "pnpm@10.28.2",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "dev": "astro dev",
+    "build": "astro build",
+    "preview": "pnpm build && wrangler dev",
+    "check": "astro check",
+    "test": "vitest run",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate:local": "wrangler d1 migrations apply yucca-db --local",
+    "db:migrate:remote": "wrangler d1 migrations apply yucca-db --remote",
+    "db:seed:local": "node scripts/seed.ts && wrangler d1 execute yucca-db --local --file=seed/seed.sql",
+    "cf-typegen": "wrangler types --strict-vars=false",
+    "make-admin": "node scripts/make-admin.ts"
+  },
+  "dependencies": {
+    "@astrojs/cloudflare": "^14.4.9",
+    "@fontsource/inter": "^5.3.0",
+    "@fontsource/poppins": "^5.3.0",
+    "astro": "^7.4.13",
+    "astro-icon": "^1.2.0",
+    "better-auth": "^1.7.27",
+    "drizzle-orm": "^0.45.4"
+  },
+  "devDependencies": {
+    "@astrojs/check": "^0.9.12",
+    "@iconify-json/fa6-brands": "^1.2.6",
+    "@iconify-json/fa6-regular": "^1.2.4",
+    "@iconify-json/fa6-solid": "^1.2.4",
+    "@tailwindcss/vite": "^4.3.5",
+    "drizzle-kit": "^0.31.11",
+    "tailwindcss": "^4.3.5",
+    "typescript": "^6.0.3",
+    "vitest": "^5.1.1",
+    "wrangler": "^4.166.0"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "esbuild",
+      "workerd",
+      "sharp"
+    ]
+  }
+}

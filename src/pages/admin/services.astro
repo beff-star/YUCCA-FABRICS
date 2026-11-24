@@ -1,0 +1,60 @@
+---
+import { asc, eq } from 'drizzle-orm';
+import AdminLayout from '~/layouts/AdminLayout.astro';
+import { cents, checked, done, int, optionalText, text } from '~/lib/admin-form';
+import { constraintFailed, db, schema } from '~/lib/db';
+import { slugify } from '~/lib/format';
+import { centsToInput, formatMoneyWhole } from '~/lib/money';
+
+const s = schema.services;
+if (Astro.request.method === 'POST') {
+  const form = await Astro.request.formData();
+  const id = int(form, 'id');
+  if (form.get('intent') === 'delete' && id) {
+    await db.delete(s).where(eq(s.id, id));
+    return done(Astro, 'success', 'Service deleted. Past requests keep their details.', '/admin/services');
+  }
+  const name = text(form, 'name', 180);
+  const description = text(form, 'description', 2000);
+  const price = cents(form, 'starting_price');
+  if (!name || !description || (text(form, 'starting_price') && price === null)) return done(Astro, 'error', 'Add a name, a description and (optionally) a valid starting price.');
+  const values = { name, description, startingPriceCents: price, duration: optionalText(form, 'duration', 100), categoryId: int(form, 'category_id'), isActive: checked(form, 'is_active') };
+  try {
+    if (id) await db.update(s).set(values).where(eq(s.id, id));
+    else await db.insert(s).values({ ...values, slug: slugify(name, true) });
+  } catch (error) {
+    if (constraintFailed(error, 'UNIQUE')) return done(Astro, 'error', 'A service with that name already exists.');
+    throw error;
+  }
+  return done(Astro, 'success', id ? 'Service updated.' : 'Service added.', '/admin/services');
+}
+
+const [categories, services] = await Promise.all([
+  db.select().from(schema.serviceCategories).orderBy(asc(schema.serviceCategories.name)),
+  db.select({ service: s, category: schema.serviceCategories.name }).from(s).leftJoin(schema.serviceCategories, eq(schema.serviceCategories.id, s.categoryId)).orderBy(asc(s.id)),
+]);
+const edit = services.find(({ service }) => service.id === Number(Astro.url.searchParams.get('edit')))?.service;
+---
+<AdminLayout title="Services" heading="Studio services" intro="Upholstery and consultation services. Services in the Fabric Sourcing and Interior Styling categories are booked through the consultation form; the rest are quoted. Card colours, photos and longer copy live in src/data/service-details.ts.">
+  <div class="grid gap-6 xl:grid-cols-[.9fr_1.1fr]">
+    <form method="post" class="grid h-fit gap-4 rounded-3xl bg-white p-6 shadow-sm ring-1 ring-ink/5">
+      <h2 class="font-serif text-2xl">{edit ? `Edit: ${edit.name}` : 'Add a service'}</h2>
+      {edit && <input type="hidden" name="id" value={edit.id} />}
+      <label class="text-sm">Name<input class="form-control mt-1" name="name" required maxlength="180" value={edit?.name ?? ''} /></label>
+      <label class="text-sm">Category<select class="form-control mt-1" name="category_id"><option value="">None</option>{categories.map((cat) => <option value={cat.id} selected={edit?.categoryId === cat.id}>{cat.name}</option>)}</select></label>
+      <label class="text-sm">Short description<textarea class="form-control mt-1" name="description" rows="3" required maxlength="2000">{edit?.description ?? ''}</textarea></label>
+      <div class="grid gap-4 sm:grid-cols-2">
+        <label class="text-sm">Starting price (KES, optional)<input class="form-control mt-1" name="starting_price" inputmode="decimal" value={centsToInput(edit?.startingPriceCents)} /></label>
+        <label class="text-sm">Duration (optional)<input class="form-control mt-1" name="duration" maxlength="100" placeholder="e.g. 60 minutes" value={edit?.duration ?? ''} /></label>
+      </div>
+      <label class="flex items-center gap-2 text-sm"><input type="checkbox" name="is_active" class="h-4 w-4 accent-forest" checked={edit?.isActive ?? true} />Show on the website</label>
+      <div class="flex gap-4"><button class="btn-primary">{edit ? 'Save' : 'Add service'}</button>{edit && <a class="self-center text-sm underline" href="/admin/services">Cancel</a>}</div>
+    </form>
+    <section class="overflow-x-auto rounded-3xl bg-white p-6 shadow-sm ring-1 ring-ink/5">
+      <table class="w-full min-w-[520px] text-left text-sm">
+        <thead class="text-xs uppercase tracking-wider text-gray-500"><tr><th class="py-2">Service</th><th>Category</th><th>From</th><th>Status</th><th class="text-right">Actions</th></tr></thead>
+        <tbody>{services.map(({ service, category }) => <tr class="border-t border-ink/5"><td class="py-3"><strong>{service.name}</strong><br /><span class="text-xs text-gray-500">{service.duration}</span></td><td>{category ?? '—'}</td><td>{service.startingPriceCents !== null ? formatMoneyWhole(service.startingPriceCents) : 'Quoted'}</td><td>{service.isActive ? 'Shown' : 'Hidden'}</td><td class="py-3"><span class="flex justify-end gap-3"><a class="underline" href={`?edit=${service.id}`}>Edit</a><form method="post" data-confirm={`Delete ${service.name}?`}><input type="hidden" name="intent" value="delete" /><input type="hidden" name="id" value={service.id} /><button class="text-[#7A2E22] underline">Delete</button></form></span></td></tr>)}</tbody>
+      </table>
+    </section>
+  </div>
+</AdminLayout>

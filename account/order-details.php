@@ -1,9 +1,0 @@
-<?php
-require_once __DIR__.'/../includes/functions.php';require_login();
-$stmt=db()->prepare('SELECT * FROM orders WHERE id=? AND user_id=?');$stmt->execute([(int)($_GET['id']??0),current_user()['id']]);$order=$stmt->fetch();
-if(!$order){http_response_code(404);exit('Order not found.');}
-$stmt=db()->prepare('SELECT product_name,sku,quantity,unit_price,line_total FROM order_items WHERE order_id=?');$stmt->execute([$order['id']]);$items=$stmt->fetchAll();
-$pageTitle='Order '.$order['order_number'].' | Yucca Fabrics';require __DIR__.'/../includes/header.php';
-?>
-<section class="mx-auto max-w-4xl px-5 py-12"><a class="text-sm underline" href="<?= e(url('account/orders.php')) ?>">← Orders</a><h1 class="mt-4 font-serif text-4xl">Order <?= e($order['order_number']) ?></h1><p class="mt-2 text-sm text-gray-600">Placed <?= e(date('F j, Y',strtotime($order['created_at']))) ?> · Status: <span class="capitalize"><?= e($order['status']) ?></span></p><div class="mt-8 grid gap-8 md:grid-cols-[1fr_280px]"><div class="bg-white p-6"><?php foreach($items as $item): ?><div class="flex justify-between gap-4 border-b border-black/10 py-4 text-sm"><div><p><?= e($item['product_name']) ?></p><p class="mt-1 text-xs text-gray-500"><?= e($item['sku']) ?> · <?= (int)$item['quantity'] ?> × <?= e(money($item['unit_price'])) ?></p></div><span><?= e(money($item['line_total'])) ?></span></div><?php endforeach; ?></div><aside class="bg-white p-6"><h2 class="font-serif text-xl">Delivery</h2><p class="mt-3 text-sm leading-6"><?= e($order['customer_name']) ?><br><?= e($order['address_line']) ?><br><?= e($order['city']) ?><?= $order['county']?', '.e($order['county']):'' ?></p><p class="mt-6 text-xs text-gray-500">Payment status: <?= e($order['payment_status']) ?></p><p class="mt-2 font-semibold">Total <?= e(money($order['total'])) ?></p></aside></div></section>
-<?php require __DIR__.'/../includes/footer.php'; ?>

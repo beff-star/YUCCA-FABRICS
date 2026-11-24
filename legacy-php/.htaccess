@@ -1,0 +1,9 @@
+Options -Indexes
+<IfModule mod_rewrite.c>
+    RewriteEngine On
+    RewriteRule ^sitemap\.xml$ sitemap.php [L]
+    RewriteRule ^robots\.txt$ robots.php [L]
+</IfModule>
+<FilesMatch "^(\.env|README\.md|AGENTS\.md|composer\.(json|lock))$">
+    Require all denied
+</FilesMatch>

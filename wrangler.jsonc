@@ -1,0 +1,20 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "yucca-homeware",
+  "compatibility_date": "2026-11-17",
+  "compatibility_flags": ["nodejs_compat"],
+  "observability": { "enabled": true },
+  "vars": {
+    "SITE_URL": "https://yuccahomeware.com",
+    "TAX_RATE": "0.16",
+    "DELIVERY_FEE": "350",
+    "MPESA_ENV": "sandbox",
+    "EMAIL_FROM": "hello@yuccahomeware.com"
+  },
+  // database_id and bucket are created on first deploy (auto-provisioning); local dev uses Miniflare.
+  "d1_databases": [
+    { "binding": "DB", "database_name": "yucca-db", "migrations_dir": "migrations" }
+  ],
+  "r2_buckets": [{ "binding": "UPLOADS", "bucket_name": "yucca-uploads" }],
+  "send_email": [{ "name": "EMAIL" }]
+}

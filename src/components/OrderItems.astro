@@ -1,0 +1,28 @@
+---
+// Line items and totals of an order, shared by the account and order confirmation pages.
+import { PRODUCT_PLACEHOLDER_IMAGE } from '~/data/fabric-collection';
+import { formatMoney } from '~/lib/money';
+import type { OrderWithItems } from '~/lib/orders';
+
+interface Props { data: OrderWithItems }
+const { order, items } = Astro.props.data;
+---
+<ul class="divide-y divide-ink/10">
+  {items.map((item) => (
+    <li class="flex items-center gap-4 py-4">
+      <img src={item.image ?? PRODUCT_PLACEHOLDER_IMAGE} alt="" class="h-16 w-16 shrink-0 rounded-xl object-cover object-top" loading="lazy" />
+      <div class="min-w-0 flex-1">
+        {item.slug ? <a class="font-semibold hover:text-forest" href={`/products/${item.slug}`}>{item.productName}</a> : <p class="font-semibold">{item.productName}</p>}
+        <p class="mt-1 text-xs text-gray-500">{item.sku} · {item.quantity} × {formatMoney(item.unitPriceCents)}</p>
+      </div>
+      <span class="font-semibold">{formatMoney(item.lineTotalCents)}</span>
+    </li>
+  ))}
+</ul>
+<dl class="mt-2 grid gap-2 border-t border-ink/10 pt-4 text-sm">
+  <div class="flex justify-between"><dt class="text-gray-600">Subtotal</dt><dd>{formatMoney(order.subtotalCents)}</dd></div>
+  {order.discountCents > 0 && <div class="flex justify-between"><dt class="text-gray-600">Discount</dt><dd>−{formatMoney(order.discountCents)}</dd></div>}
+  <div class="flex justify-between"><dt class="text-gray-600">VAT</dt><dd>{formatMoney(order.taxCents)}</dd></div>
+  <div class="flex justify-between"><dt class="text-gray-600">Delivery</dt><dd>{formatMoney(order.deliveryFeeCents)}</dd></div>
+  <div class="flex justify-between border-t border-ink/10 pt-3 text-base font-semibold"><dt>Total</dt><dd>{formatMoney(order.totalCents)}</dd></div>
+</dl>

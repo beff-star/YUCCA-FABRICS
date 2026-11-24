@@ -1,0 +1,79 @@
+---
+import { and, asc, desc, eq } from 'drizzle-orm';
+import { fabricCollection, fabricImage } from '~/data/fabric-collection';
+import BaseLayout from '~/layouts/BaseLayout.astro';
+import { db, schema } from '~/lib/db';
+
+const selected = Math.max(0, Number.parseInt(Astro.url.searchParams.get('category') ?? '0', 10) || 0);
+const g = schema.gallery;
+const [categories, projects] = await Promise.all([
+  db.select().from(schema.galleryCategories).orderBy(asc(schema.galleryCategories.name)),
+  db.select({ title: g.title, description: g.description, image: g.image, categoryName: schema.galleryCategories.name })
+    .from(g).leftJoin(schema.galleryCategories, eq(schema.galleryCategories.id, g.categoryId))
+    .where(and(eq(g.isActive, true), selected ? eq(g.categoryId, selected) : undefined))
+    .orderBy(desc(g.createdAt)).limit(48),
+]);
+---
+<BaseLayout title="Fabric Lookbook & Upholstery Projects, Nairobi | Yucca Homeware" description="Browse our upholstery fabric lookbook and a gallery of reupholstery and interior design projects by Yucca Homeware in Nairobi, Kenya.">
+  <section class="bg-cream px-5 py-16 text-center"><p class="eyebrow">A little inspiration</p><h1 class="mt-3 font-serif text-5xl">Spaces with a story</h1><p class="mx-auto mt-4 max-w-xl text-sm leading-7 text-gray-600">A collection of ideas, textures and projects. Our portfolio grows as new work is shared.</p></section>
+
+  <section id="fabric-lookbook" class="mx-auto max-w-7xl scroll-mt-24 px-5 pt-12">
+    <p class="eyebrow">The fabric lookbook</p><h2 class="mt-3 font-serif text-4xl">Textures to fall for</h2>
+    <p class="mt-3 max-w-xl text-sm leading-7 text-gray-600">Bouclé, linen, velvet and more, shown on the kind of furniture they were made for. Tap a fabric to see it up close.</p>
+    <div class="mt-8 grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
+      {fabricCollection.map((fabric) => (
+        <figure class="bg-white">
+          <button type="button" class="group block w-full text-left" data-lightbox={fabricImage(fabric.image)} data-title={`${fabric.name} · ${fabric.type}`}>
+            <span class="block overflow-hidden"><img class="aspect-[2/3] w-full object-cover motion-safe:transition motion-safe:duration-500 motion-safe:group-hover:scale-105" src={fabricImage(fabric.image)} alt={`${fabric.name} ${fabric.type} fabric shown on upholstered furniture`} width="736" height="1104" loading="lazy" /></span>
+            <figcaption class="p-3"><span class="block font-serif text-lg">{fabric.name}</span><span class="block text-[10px] uppercase tracking-widest text-gray-500">{fabric.type}</span></figcaption>
+          </button>
+        </figure>
+      ))}
+    </div>
+  </section>
+
+  <section class="mx-auto max-w-7xl px-5 py-12">
+    <h2 class="mb-6 font-serif text-4xl">Our projects</h2>
+    <nav class="mb-8 flex flex-wrap gap-2" aria-label="Project categories">
+      <a class:list={['rounded-full px-4 py-2 text-xs font-semibold', !selected ? 'bg-forest text-white' : 'bg-white']} href="/gallery" aria-current={!selected ? 'page' : undefined}>All spaces</a>
+      {categories.map((category) => <a class:list={['rounded-full px-4 py-2 text-xs font-semibold', selected === category.id ? 'bg-forest text-white' : 'bg-white']} href={`/gallery?category=${category.id}`} aria-current={selected === category.id ? 'page' : undefined}>{category.name}</a>)}
+    </nav>
+    {projects.length > 0 ? (
+      <div class="columns-1 gap-4 sm:columns-2 lg:columns-3">
+        {projects.map((project) => (
+          <figure class="mb-4 break-inside-avoid bg-white">
+            <button type="button" class="block w-full text-left" data-lightbox={project.image} data-title={project.title}>
+              <img class="w-full" src={project.image} alt={project.title} loading="lazy" />
+              <figcaption class="p-4"><p class="text-[10px] uppercase tracking-widest text-sage">{project.categoryName ?? 'Yucca project'}</p><h3 class="mt-1 font-serif text-xl">{project.title}</h3>{project.description && <p class="mt-2 text-sm text-gray-600">{project.description}</p>}</figcaption>
+            </button>
+          </figure>
+        ))}
+      </div>
+    ) : (
+      <div class="rounded-3xl bg-white px-6 py-16 text-center shadow-sm ring-1 ring-ink/5"><h3 class="font-serif text-2xl">Our gallery is taking shape</h3><p class="mt-3 text-sm text-gray-600">We’re preparing a collection of completed spaces and upholstery work. In the meantime, tell us about the room you’re dreaming of.</p><a class="mt-5 inline-block underline" href="/consultations">Book a consultation</a></div>
+    )}
+  </section>
+
+  <dialog id="gallery-lightbox" class="m-auto max-h-[90vh] max-w-5xl bg-transparent p-0 backdrop:bg-black/80" aria-label="Image viewer">
+    <button id="lightbox-close" type="button" class="absolute right-3 top-3 rounded-full bg-white px-3 py-2" aria-label="Close image">✕</button>
+    <p id="lightbox-title" class="bg-white p-3 text-sm"></p>
+  </dialog>
+</BaseLayout>
+
+<script>
+  const dialog = document.getElementById('gallery-lightbox') as HTMLDialogElement | null;
+  const title = document.getElementById('lightbox-title');
+  const image = document.createElement('img');
+  image.className = 'max-h-[80vh] w-full object-contain';
+  if (title) dialog?.insertBefore(image, title);
+  document.querySelectorAll<HTMLElement>('[data-lightbox]').forEach((trigger) => trigger.addEventListener('click', () => {
+    if (!dialog || !title) return;
+    image.src = trigger.dataset.lightbox!;
+    image.alt = trigger.dataset.title ?? '';
+    title.textContent = trigger.dataset.title ?? '';
+    dialog.showModal();
+  }));
+  document.getElementById('lightbox-close')?.addEventListener('click', () => dialog?.close());
+  // Clicking the backdrop closes the viewer.
+  dialog?.addEventListener('click', (event) => { if (event.target === dialog) dialog.close(); });
+</script>

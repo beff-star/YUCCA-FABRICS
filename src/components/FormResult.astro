@@ -1,0 +1,17 @@
+---
+// Shows an action's outcome when its form was submitted without JavaScript (the JS path uses toasts instead).
+import { isInputError } from 'astro:actions';
+import FormAlert from './FormAlert.astro';
+
+interface Props { action: Parameters<typeof Astro.getActionResult>[0]; class?: string }
+const result = Astro.getActionResult(Astro.props.action);
+let message: string | null = null;
+let type: 'success' | 'error' = 'success';
+if (result?.error) {
+  type = 'error';
+  message = isInputError(result.error) ? Object.values(result.error.fields).flat()[0] ?? 'Please check the form.' : result.error.message;
+} else if (result?.data && typeof result.data === 'object' && 'message' in result.data) {
+  message = String(result.data.message);
+}
+---
+{message && <FormAlert message={message} type={type} class={Astro.props.class} />}

@@ -1,0 +1,128 @@
+---
+import { desc, eq } from 'drizzle-orm';
+import Icon from '~/components/Icon.astro';
+import MpesaPanel from '~/components/MpesaPanel.astro';
+import StatusBadge from '~/components/StatusBadge.astro';
+import YuccaSprig from '~/components/YuccaSprig.astro';
+import { courseLook, PLATFORM_DETAILS, PLATFORM_LABELS, tracks } from '~/data/courses';
+import BaseLayout from '~/layouts/BaseLayout.astro';
+import { canAccess } from '~/lib/access';
+import { db, schema } from '~/lib/db';
+import { formatLongDate, formatTime } from '~/lib/format';
+import { googleCalendarLink } from '~/lib/ics';
+import { formatMoney, formatMoneyWhole } from '~/lib/money';
+import { getSettings, whatsappUrl } from '~/lib/settings';
+import { bookingWithCourse } from '~/lib/training';
+
+const data = await bookingWithCourse(Astro.params.reference ?? '');
+if (!data || !(await canAccess({ reference: data.booking.reference, userId: data.booking.userId, accessTokenHash: data.booking.accessTokenHash }, Astro.locals, Astro.cookies, Astro.url.searchParams.get('t')))) {
+  return Astro.rewrite('/404');
+}
+const { booking, course } = data;
+const [payment] = await db.select().from(schema.payments).where(eq(schema.payments.trainingBookingId, booking.id)).orderBy(desc(schema.payments.id)).limit(1);
+const paid = payment?.status === 'paid';
+const now = Date.now();
+const holdActive = booking.status === 'pending_payment' && (booking.holdExpiresAt?.getTime() ?? 0) > now;
+const state = booking.status === 'confirmed' ? 'confirmed'
+  : booking.status === 'completed' ? 'completed'
+    : booking.status === 'cancelled' ? 'cancelled'
+      : paid ? 'paid-unscheduled'
+        : holdActive ? 'awaiting-payment' : 'released';
+const end = new Date(booking.startsAt.getTime() + booking.hours * 3_600_000);
+const track = tracks[course.track];
+const look = courseLook(course.slug);
+const platform = PLATFORM_LABELS[booking.platform];
+const settings = await getSettings(Astro.locals);
+const summary = `${course.title} (Yucca Homeware Consultant)`;
+const heading = {
+  'awaiting-payment': 'Almost there: pay to confirm',
+  confirmed: 'You’re booked!',
+  completed: 'Thank you for learning with us',
+  cancelled: 'This booking was cancelled',
+  'paid-unscheduled': 'Payment received',
+  released: 'This time has been released',
+}[state];
+---
+<BaseLayout title={`Class booking ${booking.reference} | Yucca Homeware`} noindex>
+  <section class="relative overflow-hidden bg-night text-white">
+    <YuccaSprig class="pointer-events-none absolute -right-16 -top-16 h-80 w-80 text-white/5" />
+    <div class="relative mx-auto max-w-4xl px-5 py-12 text-center">
+      <span class:list={['mx-auto grid h-16 w-16 place-items-center rounded-full text-2xl shadow-lg', state === 'confirmed' || state === 'completed' || state === 'paid-unscheduled' ? 'bg-wheat text-night' : 'bg-white/10 text-wheat ring-1 ring-white/20']}>
+        <Icon name={state === 'confirmed' || state === 'completed' || state === 'paid-unscheduled' ? 'fa6-solid:check' : state === 'awaiting-payment' ? 'fa6-solid:hourglass-half' : 'fa6-solid:calendar-xmark'} />
+      </span>
+      <p class="eyebrow mt-6">Booking {booking.reference}</p>
+      <h1 class="mt-2 font-serif text-3xl sm:text-4xl">{heading}</h1>
+      {state === 'awaiting-payment' && <p class="mt-3 text-sm text-white/85">We’re holding your time for <strong class="text-wheat" data-countdown={booking.holdExpiresAt!.getTime()}>a few minutes</strong>. Pay with M-Pesa below to confirm it.</p>}
+      {state === 'confirmed' && <p class="mt-3 text-sm text-white/85">A confirmation and calendar invite have been sent to {booking.email}.</p>}
+      {state === 'paid-unscheduled' && <p class="mt-3 text-sm text-white/85">Thank you. We’re finalising your time and will contact you shortly to confirm it.</p>}
+      {state === 'released' && <p class="mt-3 text-sm text-white/85">Payment wasn’t completed in time, so the slot was released. You haven’t been charged.</p>}
+    </div>
+  </section>
+
+  <section class="mx-auto grid max-w-4xl gap-6 px-5 py-10">
+    <div class="overflow-hidden rounded-3xl bg-white shadow-sm ring-1 ring-ink/5 sm:grid sm:grid-cols-[220px_1fr]">
+      <div class="relative min-h-40" style={`background-color:${track.bg}`}>
+        <span class="absolute inset-0 grid place-items-center text-6xl text-white/25"><Icon name={look.icon} /></span>
+        <span class="absolute left-4 top-4 rounded-full bg-white/95 px-3 py-1 text-[10px] font-semibold uppercase tracking-[.16em] text-ink">{track.label}</span>
+      </div>
+      <div class="p-6 sm:p-8">
+        <div class="flex flex-wrap items-start justify-between gap-3"><h2 class="font-serif text-2xl">{course.title}</h2><StatusBadge status={booking.status} /></div>
+        <dl class="mt-5 grid gap-4 text-sm sm:grid-cols-2">
+          <div><dt class="text-xs uppercase tracking-[.14em] text-gray-500">When</dt><dd class="mt-1 font-semibold">{formatLongDate(booking.startsAt)}</dd><dd>{formatTime(booking.startsAt)} – {formatTime(end)} (Nairobi time)</dd><dd class="text-xs text-clay" data-local-time={booking.startsAt.getTime()}></dd></div>
+          <div><dt class="text-xs uppercase tracking-[.14em] text-gray-500">Where</dt><dd class="mt-1 flex items-center gap-2 font-semibold"><Icon name={PLATFORM_DETAILS[booking.platform].icon} class="text-forest" />{platform}</dd><dd class="text-xs text-gray-600">{PLATFORM_DETAILS[booking.platform].note}</dd></div>
+          <div><dt class="text-xs uppercase tracking-[.14em] text-gray-500">Length</dt><dd class="mt-1 font-semibold">{booking.hours} {booking.hours === 1 ? 'hour' : 'hours'} × {formatMoneyWhole(booking.rateCents)}</dd></div>
+          <div><dt class="text-xs uppercase tracking-[.14em] text-gray-500">Total</dt><dd class="mt-1 font-semibold">{formatMoney(booking.totalCents)}</dd>{payment && <dd class="mt-1"><StatusBadge status={payment.status} /></dd>}</div>
+        </dl>
+      </div>
+    </div>
+
+    {state === 'awaiting-payment' && payment && <MpesaPanel reference={booking.reference} amountCents={booking.totalCents} phone={booking.phone} status={payment.status} />}
+
+    {state === 'confirmed' && (
+      <div class="rounded-3xl bg-white p-6 shadow-sm ring-1 ring-ink/5 sm:p-8">
+        <h2 class="font-serif text-2xl">Joining your session</h2>
+        {booking.meetingUrl ? (
+          <a href={booking.meetingUrl} target="_blank" rel="noopener" class="btn-primary mt-5"><Icon name="fa6-solid:video" />Join on {platform}<span class="sr-only"> (opens in a new tab)</span></a>
+        ) : booking.platform === 'whatsapp' ? (
+          <p class="mt-3 text-sm leading-6 text-gray-600">We’ll video-call you on WhatsApp at <strong>{booking.phone}</strong> at the start time. Please keep your phone nearby.</p>
+        ) : (
+          <p class="mt-3 text-sm leading-6 text-gray-600">Your {platform} link will appear here and in your email before the session.</p>
+        )}
+        <div class="mt-6 flex flex-wrap gap-3 border-t border-ink/10 pt-5 text-sm">
+          <a class="btn-secondary" target="_blank" rel="noopener" href={googleCalendarLink({ start: booking.startsAt, end, summary, details: `Booking ${booking.reference}`, location: booking.meetingUrl ?? platform })}><Icon name="fa6-brands:google" />Add to Google Calendar</a>
+          <a class="btn-secondary" href={`/classes/booking/${booking.reference}/calendar.ics`}><Icon name="fa6-regular:calendar-plus" />Download calendar file</a>
+          <a class="btn-secondary" target="_blank" rel="noopener" href={whatsappUrl(settings, `Hello, about my class booking ${booking.reference}`)}><Icon name="fa6-brands:whatsapp" />Need to reschedule?</a>
+        </div>
+      </div>
+    )}
+
+    {(state === 'released' || state === 'completed' || state === 'cancelled') && (
+      <div class="flex flex-wrap items-center justify-between gap-4 rounded-3xl bg-cream p-6">
+        <p class="text-sm text-gray-700">{state === 'completed' ? 'Ready for your next session?' : 'Choose a new time whenever you’re ready.'}</p>
+        <a class="btn-primary" href={`/classes/${course.slug}?hours=${booking.hours}#book`}>Book {state === 'completed' ? 'again' : 'a new time'}</a>
+      </div>
+    )}
+
+    <p class="text-center text-xs text-gray-500">Questions about this booking? <a class="font-semibold text-forest underline" href="/contact?topic=Class%20booking">Contact us</a> and quote {booking.reference}.</p>
+  </section>
+</BaseLayout>
+
+<script>
+  // Hold countdown and the visitor's own time zone (if not Nairobi).
+  const countdown = document.querySelector<HTMLElement>('[data-countdown]');
+  if (countdown) {
+    const deadline = Number(countdown.dataset.countdown);
+    const tick = () => {
+      const left = Math.max(0, deadline - Date.now());
+      countdown.textContent = `${Math.floor(left / 60000)}:${String(Math.floor((left % 60000) / 1000)).padStart(2, '0')}`;
+      if (left === 0) { clearInterval(timer); window.location.reload(); }
+    };
+    const timer = setInterval(tick, 1000);
+    tick();
+  }
+  const local = document.querySelector<HTMLElement>('[data-local-time]');
+  const zone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  if (local && zone && zone !== 'Africa/Nairobi') {
+    local.textContent = `Your time: ${new Date(Number(local.dataset.localTime)).toLocaleString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit', hour12: true })}`;
+  }
+</script>

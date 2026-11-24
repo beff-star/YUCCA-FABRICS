@@ -1,0 +1,70 @@
+---
+import { count, desc, eq } from 'drizzle-orm';
+import AdminLayout from '~/layouts/AdminLayout.astro';
+import { cents, checked, done, int, nairobiDateTime, text, toNairobiInput } from '~/lib/admin-form';
+import { constraintFailed, db, schema } from '~/lib/db';
+import { formatDateTime } from '~/lib/format';
+import { centsToInput, formatMoneyWhole } from '~/lib/money';
+
+const c = schema.coupons;
+if (Astro.request.method === 'POST') {
+  const form = await Astro.request.formData();
+  const id = int(form, 'id');
+  if (form.get('intent') === 'delete' && id) {
+    const [used] = await db.select({ n: count() }).from(schema.couponUsage).where(eq(schema.couponUsage.couponId, id));
+    if ((used?.n ?? 0) > 0) return done(Astro, 'error', 'This coupon has been used, so it can’t be deleted. Untick “Active” instead.');
+    await db.delete(c).where(eq(c.id, id));
+    return done(Astro, 'success', 'Coupon deleted.', '/admin/coupons');
+  }
+  const code = text(form, 'code', 40).toUpperCase();
+  const type = text(form, 'discount_type', 10);
+  const raw = text(form, 'discount_value', 20);
+  const value = type === 'percent' ? (/^\d{1,3}$/.test(raw) ? Number(raw) : null) : cents(form, 'discount_value');
+  const minimum = cents(form, 'minimum_order') ?? 0;
+  const limit = int(form, 'usage_limit');
+  const startsAt = nairobiDateTime(form, 'starts_at');
+  const expiresAt = nairobiDateTime(form, 'expires_at');
+  if (!/^[A-Z0-9_-]{3,40}$/.test(code) || (type !== 'fixed' && type !== 'percent') || value === null || value <= 0
+    || (type === 'percent' && value > 100) || (limit !== null && limit < 1) || (startsAt && expiresAt && startsAt > expiresAt)) {
+    return done(Astro, 'error', 'Check the code (3–40 letters, numbers, - or _), the discount (percent: whole number up to 100), the usage limit and the dates.');
+  }
+  const values = { code, discountType: type, discountValue: value, minimumOrderCents: minimum, usageLimit: limit, startsAt, expiresAt, isActive: checked(form, 'is_active') } as const;
+  try {
+    if (id) await db.update(c).set(values).where(eq(c.id, id));
+    else await db.insert(c).values(values);
+  } catch (error) {
+    if (constraintFailed(error, 'UNIQUE')) return done(Astro, 'error', 'That code already exists.');
+    throw error;
+  }
+  return done(Astro, 'success', id ? 'Coupon updated.' : 'Coupon created.', '/admin/coupons');
+}
+
+const coupons = await db.select({ coupon: c, uses: count(schema.couponUsage.orderId) }).from(c)
+  .leftJoin(schema.couponUsage, eq(schema.couponUsage.couponId, c.id)).groupBy(c.id).orderBy(desc(c.id));
+const edit = coupons.find(({ coupon }) => coupon.id === Number(Astro.url.searchParams.get('edit')))?.coupon;
+const describe = (coupon: typeof c.$inferSelect) => (coupon.discountType === 'percent' ? `${coupon.discountValue}% off` : `${formatMoneyWhole(coupon.discountValue)} off`);
+---
+<AdminLayout title="Coupons" heading="Coupons" intro="Discount codes for the fabric shop. Each signed-in customer can use a code once; guests are limited only by the usage limit.">
+  <div class="grid gap-6 xl:grid-cols-[.9fr_1.1fr]">
+    <form method="post" class="grid h-fit gap-4 rounded-3xl bg-white p-6 shadow-sm ring-1 ring-ink/5 sm:grid-cols-2">
+      <h2 class="font-serif text-2xl sm:col-span-2">{edit ? `Edit ${edit.code}` : 'Create a coupon'}</h2>
+      {edit && <input type="hidden" name="id" value={edit.id} />}
+      <label class="text-sm">Code<input class="form-control mt-1 uppercase" name="code" required maxlength="40" value={edit?.code ?? ''} /></label>
+      <label class="text-sm">Type<select class="form-control mt-1" name="discount_type"><option value="percent" selected={edit?.discountType !== 'fixed'}>Percent off</option><option value="fixed" selected={edit?.discountType === 'fixed'}>Fixed amount (KES)</option></select></label>
+      <label class="text-sm">Discount (% or KES)<input class="form-control mt-1" name="discount_value" inputmode="decimal" required value={edit ? (edit.discountType === 'percent' ? edit.discountValue : centsToInput(edit.discountValue)) : ''} /></label>
+      <label class="text-sm">Minimum order (KES)<input class="form-control mt-1" name="minimum_order" inputmode="decimal" value={centsToInput(edit?.minimumOrderCents ?? 0)} /></label>
+      <label class="text-sm">Usage limit (blank = unlimited)<input class="form-control mt-1" name="usage_limit" type="number" min="1" value={edit?.usageLimit ?? ''} /></label>
+      <span></span>
+      <label class="text-sm">Starts (optional)<input class="form-control mt-1" name="starts_at" type="datetime-local" value={toNairobiInput(edit?.startsAt)} /></label>
+      <label class="text-sm">Expires (optional)<input class="form-control mt-1" name="expires_at" type="datetime-local" value={toNairobiInput(edit?.expiresAt)} /></label>
+      <label class="flex items-center gap-2 text-sm"><input type="checkbox" name="is_active" class="h-4 w-4 accent-forest" checked={edit?.isActive ?? true} />Active</label>
+      <div class="flex gap-4 sm:col-span-2"><button class="btn-primary">{edit ? 'Save' : 'Create coupon'}</button>{edit && <a class="self-center text-sm underline" href="/admin/coupons">Cancel</a>}</div>
+    </form>
+    <section class="overflow-x-auto rounded-3xl bg-white p-6 shadow-sm ring-1 ring-ink/5">
+      <table class="w-full min-w-[560px] text-left text-sm">
+        <thead class="text-xs uppercase tracking-wider text-gray-500"><tr><th class="py-2">Code</th><th>Discount</th><th>Used</th><th>Valid</th><th>Status</th><th class="text-right">Actions</th></tr></thead>
+        <tbody>{coupons.map(({ coupon, uses }) => <tr class="border-t border-ink/5"><td class="py-3 font-mono font-semibold">{coupon.code}</td><td>{describe(coupon)}{coupon.minimumOrderCents > 0 && <span class="block text-xs text-gray-500">min {formatMoneyWhole(coupon.minimumOrderCents)}</span>}</td><td>{uses}{coupon.usageLimit !== null && ` / ${coupon.usageLimit}`}</td><td class="text-xs">{coupon.startsAt ? formatDateTime(coupon.startsAt) : 'Now'} → {coupon.expiresAt ? formatDateTime(coupon.expiresAt) : 'No end'}</td><td>{coupon.isActive ? 'Active' : 'Off'}</td><td class="py-3"><span class="flex justify-end gap-3"><a class="underline" href={`?edit=${coupon.id}`}>Edit</a><form method="post" data-confirm={`Delete ${coupon.code}?`}><input type="hidden" name="intent" value="delete" /><input type="hidden" name="id" value={coupon.id} /><button class="text-[#7A2E22] underline">Delete</button></form></span></td></tr>)}</tbody>
+      </table>
+    </section>
+  </div>
+</AdminLayout>

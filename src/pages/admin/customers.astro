@@ -1,0 +1,42 @@
+---
+import { and, desc, eq, or, sql } from 'drizzle-orm';
+import StatusBadge from '~/components/StatusBadge.astro';
+import AdminLayout from '~/layouts/AdminLayout.astro';
+import { done, text } from '~/lib/admin-form';
+import { contains } from '~/lib/catalogue';
+import { db, runBatch, schema } from '~/lib/db';
+import { formatDate } from '~/lib/format';
+
+const u = schema.user;
+if (Astro.request.method === 'POST') {
+  const form = await Astro.request.formData();
+  const id = text(form, 'id', 64);
+  const [customer] = await db.select().from(u).where(and(eq(u.id, id), eq(u.role, 'customer')));
+  if (!customer) return done(Astro, 'error', 'Customer not found.');
+  const status = customer.status === 'active' ? 'suspended' : 'active';
+  // Suspending also signs the customer out everywhere.
+  await runBatch([
+    db.update(u).set({ status }).where(eq(u.id, id)),
+    ...(status === 'suspended' ? [db.delete(schema.session).where(eq(schema.session.userId, id))] : []),
+  ]);
+  return done(Astro, 'success', `${customer.name} is now ${status}.`);
+}
+
+const q = (Astro.url.searchParams.get('q') ?? '').trim().slice(0, 80);
+const customers = await db.select({
+  user: u,
+  orders: sql<number>`(select count(*) from orders where user_id = ${u.id})`,
+  classes: sql<number>`(select count(*) from training_bookings where user_id = ${u.id} and status in ('confirmed', 'completed'))`,
+}).from(u).where(and(eq(u.role, 'customer'), q ? or(contains(u.name, q), contains(u.email, q), contains(u.phone, q)) : undefined))
+  .orderBy(desc(u.createdAt)).limit(100);
+---
+<AdminLayout title="Customers" heading="Customers" intro="Registered customers. Suspending an account signs it out and blocks sign-in until it’s reactivated.">
+  <form class="mb-5 flex gap-2 rounded-3xl bg-white p-4 shadow-sm ring-1 ring-ink/5" role="search"><label class="sr-only" for="q">Search customers</label><input id="q" class="form-control max-w-xs" name="q" value={q} placeholder="Name, email or phone" /><button class="btn-primary py-2">Search</button></form>
+  <section class="overflow-x-auto rounded-3xl bg-white p-6 shadow-sm ring-1 ring-ink/5">
+    <table class="w-full min-w-[720px] text-left text-sm">
+      <thead class="text-xs uppercase tracking-wider text-gray-500"><tr><th class="py-2">Customer</th><th>Phone</th><th>Joined</th><th>Orders</th><th>Classes</th><th>Status</th><th></th></tr></thead>
+      <tbody>{customers.map(({ user, orders, classes }) => <tr class="border-t border-ink/5"><td class="py-3"><strong>{user.name}</strong><br /><a class="text-xs underline" href={`mailto:${user.email}`}>{user.email}</a></td><td>{user.phone ?? '—'}</td><td>{formatDate(user.createdAt)}</td><td><a class="underline" href={`/admin/orders?q=${encodeURIComponent(user.email)}`}>{orders}</a></td><td>{classes}</td><td><StatusBadge status={user.status} /></td><td class="text-right"><form method="post" data-confirm={user.status === 'active' ? `Suspend ${user.name}? They will be signed out.` : `Reactivate ${user.name}?`}><input type="hidden" name="id" value={user.id} /><button class="underline">{user.status === 'active' ? 'Suspend' : 'Reactivate'}</button></form></td></tr>)}</tbody>
+    </table>
+    {customers.length === 0 && <p class="text-sm text-gray-600">No customers match.</p>}
+  </section>
+</AdminLayout>

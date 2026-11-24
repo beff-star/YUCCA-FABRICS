@@ -1,0 +1,22 @@
+# Copy to .dev.vars for local development (never commit .dev.vars).
+# In production set each one with: pnpm wrangler secret put NAME
+BETTER_AUTH_SECRET=generate-a-long-random-string
+
+# Safaricom Daraja (sandbox credentials from developer.safaricom.co.ke)
+MPESA_CONSUMER_KEY=
+MPESA_CONSUMER_SECRET=
+MPESA_SHORTCODE=174379
+MPESA_PASSKEY=
+# Random string placed in the callback URL path, because Daraja callbacks are not signed.
+MPESA_CALLBACK_TOKEN=generate-a-random-string
+
+# Google Calendar / Meet (OAuth client, scope calendar.events)
+GOOGLE_CLIENT_ID=
+GOOGLE_CLIENT_SECRET=
+
+# 32-byte key, base64 (encrypts the stored Google refresh token):
+#   node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"
+TOKEN_ENCRYPTION_KEY=
+
+# wrangler.jsonc sets SITE_URL to the live domain; override it for local development.
+SITE_URL=http://localhost:4321

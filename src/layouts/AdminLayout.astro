@@ -1,0 +1,82 @@
+---
+import '@fontsource/inter/400.css';
+import '@fontsource/inter/500.css';
+import '@fontsource/inter/600.css';
+import '@fontsource/poppins/500.css';
+import '@fontsource/poppins/600.css';
+import '~/styles/global.css';
+import FormAlert from '~/components/FormAlert.astro';
+import Icon from '~/components/Icon.astro';
+
+interface Props { title: string; heading: string; intro?: string }
+const { title, heading, intro } = Astro.props;
+const path = Astro.url.pathname;
+const sections = [
+  { href: '/admin', icon: 'fa6-solid:gauge', label: 'Overview' },
+  { href: '/admin/orders', icon: 'fa6-solid:bag-shopping', label: 'Orders' },
+  { href: '/admin/training', icon: 'fa6-solid:chalkboard-user', label: 'Classes' },
+  { href: '/admin/consultations', icon: 'fa6-solid:calendar-check', label: 'Consultations' },
+  { href: '/admin/requests', icon: 'fa6-solid:couch', label: 'Service requests' },
+  { href: '/admin/products', icon: 'fa6-solid:swatchbook', label: 'Products' },
+  { href: '/admin/categories', icon: 'fa6-solid:tags', label: 'Categories' },
+  { href: '/admin/services', icon: 'fa6-solid:scissors', label: 'Services' },
+  { href: '/admin/customers', icon: 'fa6-solid:users', label: 'Customers' },
+  { href: '/admin/coupons', icon: 'fa6-solid:ticket', label: 'Coupons' },
+  { href: '/admin/reviews', icon: 'fa6-solid:star', label: 'Reviews' },
+  { href: '/admin/content', icon: 'fa6-solid:newspaper', label: 'Journal & gallery' },
+  { href: '/admin/messages', icon: 'fa6-solid:inbox', label: 'Messages' },
+  { href: '/admin/reports', icon: 'fa6-solid:chart-column', label: 'Reports' },
+  { href: '/admin/settings', icon: 'fa6-solid:gear', label: 'Settings' },
+];
+const isActive = (href: string) => (href === '/admin' ? path === '/admin' : path === href || path.startsWith(`${href}/`));
+const { flash, user } = Astro.locals;
+---
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="robots" content="noindex" />
+    <title>{title} · Admin · Yucca Homeware</title>
+    <link rel="icon" type="image/jpeg" href="/images/yucca-homeware-logo.jpeg" />
+  </head>
+  <body class="bg-sand font-sans text-ink antialiased">
+    <a href="#main" class="skip-link">Skip to content</a>
+    <div class="min-h-screen lg:flex">
+      <aside class="bg-forest text-white lg:sticky lg:top-0 lg:h-screen lg:w-64 lg:shrink-0 lg:overflow-y-auto">
+        <div class="flex items-center justify-between p-5">
+          <a href="/admin" class="flex items-center gap-3" aria-label="Admin overview"><img src="/images/yucca-homeware-logo.jpeg" alt="" class="h-12 w-12 rounded-lg bg-white object-contain p-1" /><span class="leading-tight"><span class="block font-serif font-semibold tracking-[.18em]">YUCCA</span><span class="block text-[10px] uppercase tracking-[.3em] text-wheat">Studio admin</span></span></a>
+          <button id="admin-menu-toggle" type="button" class="icon-button text-white hover:bg-white/10 lg:hidden" aria-expanded="false" aria-controls="admin-nav" aria-label="Admin menu"><Icon name="fa6-solid:bars" /></button>
+        </div>
+        <nav id="admin-nav" class="hidden gap-1 px-3 pb-5 text-sm lg:grid" aria-label="Admin">
+          {sections.map((section) => <a class:list={['admin-link', { 'is-active': isActive(section.href) }]} href={section.href} aria-current={isActive(section.href) ? 'page' : undefined}><Icon name={section.icon} class="w-4 text-wheat" />{section.label}</a>)}
+          <div class="mt-4 grid gap-1 border-t border-white/15 pt-4">
+            <a class="admin-link text-white/80" href="/" target="_blank" rel="noopener"><Icon name="fa6-solid:arrow-up-right-from-square" class="w-4" />View website</a>
+            <form action="/auth/logout" method="post"><button class="admin-link w-full text-left text-white/80"><Icon name="fa6-solid:arrow-right-from-bracket" class="w-4" />Sign out</button></form>
+          </div>
+        </nav>
+      </aside>
+      <div class="min-w-0 flex-1">
+        <header class="flex flex-wrap items-center justify-between gap-3 border-b border-ink/5 bg-white px-5 py-4 md:px-8">
+          <p class="text-xs uppercase tracking-[.2em] text-gray-500">Yucca Homeware · administration</p>
+          <p class="text-sm">Signed in as <strong>{user?.name}</strong></p>
+        </header>
+        <main id="main" tabindex="-1" class="mx-auto max-w-7xl p-5 md:p-8">
+          <div class="mb-6"><h1 class="font-serif text-3xl sm:text-4xl">{heading}</h1>{intro && <p class="mt-2 max-w-2xl text-sm text-gray-600">{intro}</p>}</div>
+          {flash && <FormAlert message={flash.message} type={flash.type} class="mb-6" />}
+          <slot />
+        </main>
+      </div>
+    </div>
+    <script>
+      import '~/scripts/site';
+      const toggle = document.getElementById('admin-menu-toggle');
+      const nav = document.getElementById('admin-nav');
+      toggle?.addEventListener('click', () => {
+        const open = nav?.classList.toggle('hidden') === false;
+        nav?.classList.toggle('grid', open);
+        toggle.setAttribute('aria-expanded', String(open));
+      });
+    </script>
+  </body>
+</html>

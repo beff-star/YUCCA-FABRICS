@@ -1,0 +1,130 @@
+---
+import { asc, desc, eq } from 'drizzle-orm';
+import StatusBadge from '~/components/StatusBadge.astro';
+import AdminLayout from '~/layouts/AdminLayout.astro';
+import { done, int, optionalText, text } from '~/lib/admin-form';
+import { db, schema } from '~/lib/db';
+import { formatDate, slugify } from '~/lib/format';
+import { journalImage } from '~/lib/journal';
+import { deleteUpload, saveUploadedImage, UploadError } from '~/lib/uploads';
+
+const b = schema.blogPosts;
+const g = schema.gallery;
+const tab = Astro.url.searchParams.get('tab') === 'gallery' ? 'gallery' : 'journal';
+
+if (Astro.request.method === 'POST') {
+  const form = await Astro.request.formData();
+  const intent = text(form, 'intent', 30);
+  const id = int(form, 'id');
+  const upload = async (folder: 'blog' | 'gallery') => saveUploadedImage(form.get('image') as File | null, folder);
+  try {
+    if (intent === 'post-delete' && id) {
+      const [row] = await db.delete(b).where(eq(b.id, id)).returning();
+      await deleteUpload(row?.image);
+      return done(Astro, 'success', 'Article deleted.', '/admin/content');
+    }
+    if (intent === 'photo-delete' && id) {
+      const [row] = await db.delete(g).where(eq(g.id, id)).returning();
+      await deleteUpload(row?.image);
+      return done(Astro, 'success', 'Photo deleted.', '/admin/content?tab=gallery');
+    }
+    if (intent === 'post') {
+      const title = text(form, 'title', 200);
+      const body = text(form, 'body', 50_000);
+      const status = form.get('status') === 'published' ? 'published' : 'draft';
+      if (!title || !body) return done(Astro, 'error', 'An article needs a title and some text.');
+      const [existing] = id ? await db.select().from(b).where(eq(b.id, id)) : [];
+      const image = await upload('blog');
+      const values = {
+        title, body, status, excerpt: optionalText(form, 'excerpt', 500), categoryId: int(form, 'category_id'),
+        // Publishing sets the date once; going back to draft clears it.
+        publishedAt: status === 'published' ? existing?.publishedAt ?? new Date() : null,
+        ...(image ? { image } : {}),
+      } as const;
+      if (existing) {
+        await db.update(b).set(values).where(eq(b.id, existing.id));
+        if (image) await deleteUpload(existing.image);
+      } else {
+        await db.insert(b).values({ ...values, slug: slugify(title, true), authorId: Astro.locals.user!.id });
+      }
+      return done(Astro, 'success', existing ? 'Article saved.' : 'Article created.', '/admin/content');
+    }
+    if (intent === 'photo') {
+      const title = text(form, 'title', 180);
+      const [existing] = id ? await db.select().from(g).where(eq(g.id, id)) : [];
+      const image = await upload('gallery');
+      if (!title || (!existing && !image)) return done(Astro, 'error', 'A gallery photo needs a title and an image.');
+      const values = { title, description: optionalText(form, 'description', 1000), categoryId: int(form, 'category_id'), ...(image ? { image } : {}) };
+      if (existing) {
+        await db.update(g).set(values).where(eq(g.id, existing.id));
+        if (image) await deleteUpload(existing.image);
+      } else {
+        await db.insert(g).values({ ...values, image: image! });
+      }
+      return done(Astro, 'success', existing ? 'Photo updated.' : 'Photo added.', '/admin/content?tab=gallery');
+    }
+  } catch (error) {
+    if (error instanceof UploadError) return done(Astro, 'error', error.message);
+    throw error;
+  }
+}
+
+const editId = Number(Astro.url.searchParams.get('edit'));
+const [blogCategories, galleryCategories, posts, photos] = await db.batch([
+  db.select().from(schema.blogCategories).orderBy(asc(schema.blogCategories.name)),
+  db.select().from(schema.galleryCategories).orderBy(asc(schema.galleryCategories.name)),
+  db.select().from(b).orderBy(desc(b.createdAt)),
+  db.select().from(g).orderBy(desc(g.createdAt)),
+]);
+const editPost = tab === 'journal' ? posts.find((post) => post.id === editId) : undefined;
+const editPhoto = tab === 'gallery' ? photos.find((photo) => photo.id === editId) : undefined;
+---
+<AdminLayout title="Journal & gallery" heading="Journal & gallery" intro="Articles use a simple format: a blank line starts a new paragraph, “## ” starts a heading and “- ” starts a bullet point.">
+  <nav class="mb-6 flex gap-2" aria-label="Content type">
+    <a href="/admin/content" class:list={['rounded-full px-4 py-2 text-sm font-semibold', tab === 'journal' ? 'bg-forest text-white' : 'bg-white ring-1 ring-ink/10']} aria-current={tab === 'journal' ? 'page' : undefined}>Journal</a>
+    <a href="/admin/content?tab=gallery" class:list={['rounded-full px-4 py-2 text-sm font-semibold', tab === 'gallery' ? 'bg-forest text-white' : 'bg-white ring-1 ring-ink/10']} aria-current={tab === 'gallery' ? 'page' : undefined}>Gallery</a>
+  </nav>
+  {tab === 'journal' ? (
+    <div class="grid gap-6 xl:grid-cols-[1.1fr_.9fr]">
+      <form method="post" enctype="multipart/form-data" class="grid h-fit gap-4 rounded-3xl bg-white p-6 shadow-sm ring-1 ring-ink/5" id="post-form">
+        <h2 class="font-serif text-2xl">{editPost ? 'Edit article' : 'New article'}</h2>
+        <input type="hidden" name="intent" value="post" />
+        {editPost && <input type="hidden" name="id" value={editPost.id} />}
+        <label class="text-sm">Title<input class="form-control mt-1" name="title" required maxlength="200" value={editPost?.title ?? ''} /></label>
+        <div class="grid gap-4 sm:grid-cols-2">
+          <label class="text-sm">Category<select class="form-control mt-1" name="category_id"><option value="">None</option>{blogCategories.map((cat) => <option value={cat.id} selected={editPost?.categoryId === cat.id}>{cat.name}</option>)}</select></label>
+          <label class="text-sm">Status<select class="form-control mt-1" name="status"><option value="draft">Draft</option><option value="published" selected={editPost?.status === 'published'}>Published</option></select></label>
+        </div>
+        <label class="text-sm">Excerpt (shown on cards)<textarea class="form-control mt-1" name="excerpt" rows="2" maxlength="500">{editPost?.excerpt ?? ''}</textarea></label>
+        <label class="text-sm">Article<textarea class="form-control mt-1 font-mono text-sm" name="body" rows="14" required>{editPost?.body ?? ''}</textarea></label>
+        <label class="text-sm">Cover photo{editPost?.image && ' (leave empty to keep the current one)'}<input class="form-control mt-1 text-sm" name="image" type="file" accept="image/jpeg,image/png,image/webp" /></label>
+        <div class="flex gap-4"><button class="btn-primary">{editPost ? 'Save article' : 'Create article'}</button>{editPost && <a class="self-center text-sm underline" href="/admin/content">Cancel</a>}</div>
+      </form>
+      <section class="grid h-fit gap-3">
+        {posts.map((post) => (
+          <article class="flex gap-4 rounded-3xl bg-white p-4 shadow-sm ring-1 ring-ink/5">
+            <img src={journalImage(post.image)} alt="" class="h-16 w-16 shrink-0 rounded-xl object-cover" loading="lazy" />
+            <div class="min-w-0 flex-1"><p class="truncate font-semibold">{post.title}</p><p class="text-xs text-gray-500">{post.publishedAt ? formatDate(post.publishedAt) : 'Not published'}</p><div class="mt-2 flex flex-wrap items-center gap-3 text-xs"><StatusBadge status={post.status} />{post.status === 'published' && <a class="underline" href={`/journal/${post.slug}`} target="_blank" rel="noopener">View</a>}<a class="underline" href={`?edit=${post.id}#post-form`}>Edit</a><form method="post" data-confirm={`Delete “${post.title}”?`}><input type="hidden" name="intent" value="post-delete" /><input type="hidden" name="id" value={post.id} /><button class="text-[#7A2E22] underline">Delete</button></form></div></div>
+          </article>
+        ))}
+      </section>
+    </div>
+  ) : (
+    <div class="grid gap-6 xl:grid-cols-[.8fr_1.2fr]">
+      <form method="post" enctype="multipart/form-data" class="grid h-fit gap-4 rounded-3xl bg-white p-6 shadow-sm ring-1 ring-ink/5">
+        <h2 class="font-serif text-2xl">{editPhoto ? 'Edit photo' : 'Add a project photo'}</h2>
+        <input type="hidden" name="intent" value="photo" />
+        {editPhoto && <input type="hidden" name="id" value={editPhoto.id} />}
+        <label class="text-sm">Title<input class="form-control mt-1" name="title" required maxlength="180" value={editPhoto?.title ?? ''} /></label>
+        <label class="text-sm">Category<select class="form-control mt-1" name="category_id"><option value="">None</option>{galleryCategories.map((cat) => <option value={cat.id} selected={editPhoto?.categoryId === cat.id}>{cat.name}</option>)}</select></label>
+        <label class="text-sm">Description<textarea class="form-control mt-1" name="description" rows="2" maxlength="1000">{editPhoto?.description ?? ''}</textarea></label>
+        <label class="text-sm">Photo{editPhoto && ' (leave empty to keep it)'}<input class="form-control mt-1 text-sm" name="image" type="file" accept="image/jpeg,image/png,image/webp" required={!editPhoto} /></label>
+        <div class="flex gap-4"><button class="btn-primary">{editPhoto ? 'Save' : 'Add photo'}</button>{editPhoto && <a class="self-center text-sm underline" href="/admin/content?tab=gallery">Cancel</a>}</div>
+      </form>
+      <section class="grid h-fit grid-cols-2 gap-4 sm:grid-cols-3">
+        {photos.length === 0 && <p class="col-span-full rounded-3xl bg-white p-6 text-sm text-gray-600">No project photos yet. The gallery shows the fabric lookbook until you add some.</p>}
+        {photos.map((photo) => <figure class="overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-ink/5"><img src={photo.image} alt={photo.title} class="aspect-square w-full object-cover" loading="lazy" /><figcaption class="p-3 text-xs"><strong class="block truncate text-sm">{photo.title}</strong><span class="mt-2 flex gap-3"><a class="underline" href={`?tab=gallery&edit=${photo.id}`}>Edit</a><form method="post" data-confirm="Delete this photo?"><input type="hidden" name="intent" value="photo-delete" /><input type="hidden" name="id" value={photo.id} /><button class="text-[#7A2E22] underline">Delete</button></form></span></figcaption></figure>)}
+      </section>
+    </div>
+  )}
+</AdminLayout>

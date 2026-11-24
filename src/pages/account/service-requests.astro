@@ -1,0 +1,40 @@
+---
+import { desc, eq, inArray } from 'drizzle-orm';
+import Icon from '~/components/Icon.astro';
+import StatusBadge from '~/components/StatusBadge.astro';
+import AccountLayout from '~/layouts/AccountLayout.astro';
+import { db, schema } from '~/lib/db';
+import { formatDate, formatIsoDate } from '~/lib/format';
+import { formatMoney } from '~/lib/money';
+
+const r = schema.serviceRequests;
+const requests = await db.select({
+  id: r.id, status: r.status, location: r.location, description: r.description, adminResponse: r.adminResponse,
+  preferredDate: r.preferredDate, createdAt: r.createdAt, serviceName: schema.services.name,
+}).from(r).leftJoin(schema.services, eq(schema.services.id, r.serviceId)).where(eq(r.userId, Astro.locals.user!.id)).orderBy(desc(r.createdAt));
+// Quotations sent by the studio (the PHP site stored these but never showed them to customers).
+const quotes = requests.length
+  ? await db.select().from(schema.quotations).where(inArray(schema.quotations.requestId, requests.map((req) => req.id))).orderBy(desc(schema.quotations.createdAt))
+  : [];
+---
+<AccountLayout active="requests" heading="Service requests" intro="Upholstery and project enquiries, with our replies and quotes." action={{ label: 'Start a project', href: '/services#request-form', icon: 'fa6-solid:plus' }}>
+  {requests.length > 0 ? (
+    <div class="grid gap-4">
+      {requests.map((item) => (
+        <article class="rounded-3xl bg-white p-6 shadow-sm ring-1 ring-ink/5">
+          <div class="flex flex-wrap items-start justify-between gap-3">
+            <div><h2 class="font-serif text-xl">{item.serviceName ?? 'Project enquiry'}</h2><p class="mt-1 text-xs text-gray-500">Sent {formatDate(item.createdAt)} · {item.location}{item.preferredDate && ` · preferred ${formatIsoDate(item.preferredDate)}`}</p></div>
+            <StatusBadge status={item.status} />
+          </div>
+          <p class="mt-3 text-sm leading-6 text-gray-600">{item.description}</p>
+          {item.adminResponse && <p class="mt-4 rounded-2xl bg-cream p-4 text-sm leading-6"><strong class="block text-xs uppercase tracking-[.14em] text-sage">Reply from Yucca</strong>{item.adminResponse}</p>}
+          {quotes.filter((q) => q.requestId === item.id).map((quote) => (
+            <div class="mt-4 rounded-2xl border border-forest/20 p-4 text-sm"><div class="flex flex-wrap items-center justify-between gap-2"><strong>Quote: {formatMoney(quote.amountCents)}</strong>{quote.validUntil && <span class="text-xs text-gray-500">Valid until {formatIsoDate(quote.validUntil)}</span>}</div><p class="mt-2 whitespace-pre-line leading-6 text-gray-600">{quote.details}</p></div>
+          ))}
+        </article>
+      ))}
+    </div>
+  ) : (
+    <div class="rounded-3xl bg-white px-6 py-16 text-center shadow-sm ring-1 ring-ink/5"><Icon name="fa6-solid:couch" class="text-3xl text-sage" /><h2 class="mt-4 font-serif text-2xl">No requests yet</h2><p class="mt-2 text-sm text-gray-600">Send us a photo of the piece you love and we’ll advise on fabric and a quote.</p><a class="btn-primary mt-6" href="/services#request-form">Start a project</a></div>
+  )}
+</AccountLayout>

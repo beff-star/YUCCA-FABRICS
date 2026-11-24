@@ -1,0 +1,67 @@
+---
+import { eq, or } from 'drizzle-orm';
+import { APIError } from 'better-auth/api';
+import PasswordInput from '~/components/PasswordInput.astro';
+import AuthLayout from '~/layouts/AuthLayout.astro';
+import { auth, passwordProblem, redirectWithHeaders, safeNext } from '~/lib/auth';
+import { mergeGuestCart } from '~/lib/cart';
+import { db, schema } from '~/lib/db';
+import { allow, clientIp } from '~/lib/throttle';
+
+const next = Astro.url.searchParams.get('next');
+if (Astro.locals.user) return Astro.redirect('/account');
+
+const errors: string[] = [];
+const values = { name: '', username: '', phone: '', email: '', terms: false };
+if (Astro.request.method === 'POST') {
+  const form = await Astro.request.formData();
+  values.name = String(form.get('name') ?? '').trim();
+  values.username = String(form.get('username') ?? '').trim();
+  values.phone = String(form.get('phone') ?? '').trim();
+  values.email = String(form.get('email') ?? '').trim().toLowerCase();
+  values.terms = form.get('terms') !== null;
+  const password = String(form.get('password') ?? '');
+
+  if (!values.name || values.name.length > 150) errors.push('Please enter your full name.');
+  if (!/^[A-Za-z0-9_]{3,60}$/.test(values.username)) errors.push('Choose a username of 3–60 letters, numbers or underscores.');
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(values.email) || values.email.length > 190) errors.push('Enter a valid email address.');
+  if (values.phone.length > 40) errors.push('Enter a shorter phone number.');
+  const weak = passwordProblem(password);
+  if (weak) errors.push(weak);
+  if (!values.terms) errors.push('Please accept the terms and privacy policy.');
+  if (errors.length === 0 && !(await allow(`register:${clientIp(Astro.request)}`, 10, 60 * 60))) errors.push('Too many new accounts from this connection. Please try again later.');
+
+  if (errors.length === 0) {
+    const [taken] = await db.select({ id: schema.user.id }).from(schema.user)
+      .where(or(eq(schema.user.email, values.email), eq(schema.user.username, values.username)));
+    if (taken) {
+      errors.push('That email or username is already registered. Try signing in instead.');
+    } else {
+      try {
+        const { headers, response } = await auth.api.signUpEmail({
+          body: { name: values.name, email: values.email, password, username: values.username, phone: values.phone || undefined },
+          headers: Astro.request.headers,
+          returnHeaders: true,
+        });
+        await mergeGuestCart(Astro.cookies, response.user.id);
+        return redirectWithHeaders(safeNext(next, '/account'), headers);
+      } catch (cause) {
+        if (!(cause instanceof APIError)) throw cause;
+        errors.push('We couldn’t create your account. Please check your details and try again.');
+      }
+    }
+  }
+}
+---
+<AuthLayout title="Create an account" eyebrow="Welcome to Yucca" heading="Create your account" intro="Keep track of orders, classes, service requests and consultations in one place." errors={errors}>
+  <form method="post" class="mt-2 grid gap-5 sm:grid-cols-2">
+    <label class="text-sm font-medium sm:col-span-2">Full name<input class="form-control mt-1" name="name" required maxlength="150" autocomplete="name" value={values.name} /></label>
+    <label class="text-sm font-medium">Username<input class="form-control mt-1" name="username" required minlength="3" maxlength="60" pattern="[A-Za-z0-9_]{3,60}" autocomplete="username" value={values.username} aria-describedby="username-hint" /><span class="mt-1.5 block text-xs font-normal text-gray-500" id="username-hint">Letters, numbers and underscores.</span></label>
+    <label class="text-sm font-medium">Phone (optional)<input class="form-control mt-1" type="tel" name="phone" maxlength="40" autocomplete="tel" value={values.phone} /></label>
+    <label class="text-sm font-medium sm:col-span-2">Email<input class="form-control mt-1" type="email" name="email" required autocomplete="email" value={values.email} /></label>
+    <div class="sm:col-span-2"><PasswordInput name="password" id="register-password" label="Password" autocomplete="new-password" minlength={10} hint="At least 10 characters, with an uppercase letter, a lowercase letter and a number." /></div>
+    <label class="flex items-start gap-3 text-sm sm:col-span-2"><input type="checkbox" name="terms" required class="mt-0.5 h-4 w-4 accent-forest" checked={values.terms} /><span>I agree to the <a class="font-semibold text-forest underline" href="/terms">terms</a> and <a class="font-semibold text-forest underline" href="/privacy">privacy policy</a>.</span></label>
+    <button class="rounded-full bg-forest px-6 py-3.5 font-semibold text-white transition hover:bg-olive sm:col-span-2">Create account</button>
+  </form>
+  <p class="mt-8 rounded-2xl bg-cream p-4 text-center text-sm">Already have an account? <a class="font-semibold text-forest underline" href="/auth/login">Sign in</a></p>
+</AuthLayout>

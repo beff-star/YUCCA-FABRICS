@@ -1,0 +1,81 @@
+---
+import { desc, eq, inArray } from 'drizzle-orm';
+import StatusBadge from '~/components/StatusBadge.astro';
+import { REQUEST_STATUSES } from '~/db/schema';
+import AdminLayout from '~/layouts/AdminLayout.astro';
+import { cents, done, int, text } from '~/lib/admin-form';
+import { db, runBatch, schema } from '~/lib/db';
+import { emailBody, sendEmail } from '~/lib/email';
+import { addDays } from '~/lib/availability';
+import { formatDateTime, formatIsoDate, todayInNairobi } from '~/lib/format';
+import { statusLabel } from '~/lib/labels';
+import { formatMoney } from '~/lib/money';
+
+const r = schema.serviceRequests;
+type Status = (typeof REQUEST_STATUSES)[number];
+
+if (Astro.request.method === 'POST') {
+  const form = await Astro.request.formData();
+  const id = int(form, 'id');
+  let status = text(form, 'status', 20) as Status;
+  const [item] = id ? await db.select().from(r).where(eq(r.id, id)) : [];
+  if (!item || !REQUEST_STATUSES.includes(status)) return done(Astro, 'error', 'Choose a request and a valid status.');
+  const amount = cents(form, 'quote_amount');
+  const details = text(form, 'quote_details', 5000);
+  if ((amount === null) !== (details === '') || (amount !== null && amount <= 0)) return done(Astro, 'error', 'A quote needs both an amount and the details.');
+  if (amount !== null) status = 'quoted';
+  const response = text(form, 'admin_response', 5000) || null;
+  await runBatch([
+    db.update(r).set({ status, adminResponse: response }).where(eq(r.id, item.id)),
+    ...(amount !== null ? [db.insert(schema.quotations).values({ requestId: item.id, amountCents: amount, details, validUntil: addDays(todayInNairobi(), 30) })] : []),
+  ]);
+  // The PHP site never emailed customers about requests; now they hear about replies and quotes.
+  if (status !== item.status || amount !== null || (response && response !== item.adminResponse)) {
+    Astro.locals.cfContext.waitUntil(sendEmail({
+      to: item.email,
+      subject: amount !== null ? 'Your quote from Yucca Homeware' : `Update on your service request: ${statusLabel(status)}`,
+      text: emailBody(`Hello ${item.name},`,
+        amount !== null ? `Here is our quote for your project: ${formatMoney(amount)}, valid for 30 days.\n\n${details}` : `Your service request is now: ${statusLabel(status)}.`,
+        response ?? '', 'Reply to this email to accept or ask any questions.'),
+    }));
+  }
+  return done(Astro, 'success', amount !== null ? 'Quote sent to the customer.' : 'Request updated.');
+}
+
+const rows = await db.select({ request: r, service: schema.services.name }).from(r).leftJoin(schema.services, eq(schema.services.id, r.serviceId)).orderBy(desc(r.createdAt)).limit(150);
+const ids = rows.map(({ request }) => request.id);
+const [images, quotes] = ids.length
+  ? await Promise.all([
+    db.select().from(schema.serviceRequestImages).where(inArray(schema.serviceRequestImages.requestId, ids)),
+    db.select().from(schema.quotations).where(inArray(schema.quotations.requestId, ids)).orderBy(desc(schema.quotations.createdAt)),
+  ])
+  : [[], []];
+---
+<AdminLayout title="Service requests" heading="Service requests" intro="Upholstery and project enquiries. Add a reply or a quote; the customer is emailed and sees it in their account.">
+  <div class="grid gap-4">
+    {rows.length === 0 && <p class="rounded-3xl bg-white p-6 text-sm text-gray-600">No requests yet.</p>}
+    {rows.map(({ request, service }) => (
+      <article class="grid gap-5 rounded-3xl bg-white p-6 shadow-sm ring-1 ring-ink/5 lg:grid-cols-[1fr_360px]">
+        <div class="text-sm">
+          <div class="flex flex-wrap items-center gap-3"><h2 class="font-serif text-xl">{service ?? 'Project enquiry'}</h2><StatusBadge status={request.status} /></div>
+          <p class="mt-2"><strong>{request.name}</strong> · <a class="underline" href={`mailto:${request.email}`}>{request.email}</a> · <a class="underline" href={`tel:${request.phone}`}>{request.phone}</a></p>
+          <p class="text-gray-600">{request.location}{request.preferredDate && ` · preferred ${formatIsoDate(request.preferredDate)}`}</p>
+          <p class="mt-3 whitespace-pre-line leading-6">{request.description}</p>
+          <div class="mt-3 flex flex-wrap gap-2">{images.filter((img) => img.requestId === request.id).map((img) => <a href={img.image} target="_blank" rel="noopener"><img src={img.image} alt="Reference photo from the customer" class="h-24 w-24 rounded-xl object-cover" loading="lazy" /></a>)}</div>
+          {quotes.filter((q) => q.requestId === request.id).map((quote) => <p class="mt-3 rounded-xl bg-sand p-3 text-xs"><strong>Quote {formatMoney(quote.amountCents)}</strong> · {statusLabel(quote.status)} · sent {formatDateTime(quote.createdAt)}<br /><span class="whitespace-pre-line">{quote.details}</span></p>)}
+          <p class="mt-3 text-xs text-gray-500">Received {formatDateTime(request.createdAt)}</p>
+        </div>
+        <form method="post" class="grid h-fit gap-3 rounded-2xl bg-sand p-4">
+          <input type="hidden" name="id" value={request.id} />
+          <label class="text-sm">Status<select class="form-control mt-1" name="status">{REQUEST_STATUSES.map((s) => <option value={s} selected={request.status === s}>{statusLabel(s)}</option>)}</select></label>
+          <label class="text-sm">Reply to the customer<textarea class="form-control mt-1" name="admin_response" rows="3" maxlength="5000">{request.adminResponse ?? ''}</textarea></label>
+          <details class="rounded-xl bg-white p-3"><summary class="cursor-pointer text-sm font-semibold">Add a quote</summary>
+            <label class="mt-3 block text-sm">Amount (KES)<input class="form-control mt-1" name="quote_amount" inputmode="decimal" /></label>
+            <label class="mt-3 block text-sm">What’s included<textarea class="form-control mt-1" name="quote_details" rows="3" maxlength="5000"></textarea></label>
+          </details>
+          <button class="btn-primary py-2">Save &amp; notify</button>
+        </form>
+      </article>
+    ))}
+  </div>
+</AdminLayout>

@@ -1,0 +1,30 @@
+---
+import { desc, eq } from 'drizzle-orm';
+import Icon from '~/components/Icon.astro';
+import StatusBadge from '~/components/StatusBadge.astro';
+import AccountLayout from '~/layouts/AccountLayout.astro';
+import { db, schema } from '~/lib/db';
+import { formatClock, formatIsoDate } from '~/lib/format';
+import { statusLabel } from '~/lib/labels';
+
+const c = schema.consultations;
+const rows = await db.select().from(c).where(eq(c.userId, Astro.locals.user!.id)).orderBy(desc(c.preferredDate), desc(c.preferredTime));
+---
+<AccountLayout active="consultations" heading="Your consultations" intro="Requests are confirmed by our team; you’ll see any notes from us here." action={{ label: 'Book a consultation', href: '/consultations#book', icon: 'fa6-solid:calendar-plus' }}>
+  {rows.length > 0 ? (
+    <div class="grid gap-4">
+      {rows.map((item) => (
+        <article class="rounded-3xl bg-white p-6 shadow-sm ring-1 ring-ink/5">
+          <div class="flex flex-wrap items-start justify-between gap-3">
+            <div><h2 class="font-serif text-xl">{item.consultationType}</h2><p class="mt-1 text-sm text-gray-600"><Icon name="fa6-regular:calendar" class="mr-1.5 inline" />{formatIsoDate(item.preferredDate)} · {formatClock(item.preferredTime)} · {statusLabel(item.method)} · {item.propertyType}</p></div>
+            <StatusBadge status={item.status} />
+          </div>
+          <p class="mt-3 line-clamp-2 text-sm text-gray-600">{item.description}</p>
+          {item.adminNotes && <p class="mt-4 rounded-2xl bg-cream p-4 text-sm leading-6"><strong class="block text-xs uppercase tracking-[.14em] text-sage">Note from Yucca</strong>{item.adminNotes}</p>}
+        </article>
+      ))}
+    </div>
+  ) : (
+    <div class="rounded-3xl bg-white px-6 py-16 text-center shadow-sm ring-1 ring-ink/5"><Icon name="fa6-solid:calendar-check" class="text-3xl text-sage" /><h2 class="mt-4 font-serif text-2xl">No consultations yet</h2><p class="mt-2 text-sm text-gray-600">Talk through colour, fabric and layout with us, online or in person.</p><a class="btn-primary mt-6" href="/consultations#book">Book a consultation</a></div>
+  )}
+</AccountLayout>
